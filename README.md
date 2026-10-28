@@ -14,7 +14,9 @@ without merge conflicts in files. A lightweight alternative to coArchi.
 - **Optional auto-sync** on every save and/or every N minutes.
 - Works offline: Sync saves a local version and uploads it next time.
 
-Requires Archi 5.10+ (Windows now; macOS uses the same plugin, see below).
+Requires Archi 5.10 or newer: it uses the JGit 7 bundle that Archi ships from 5.10 on. Archi 5.9 and older can't load it.
+See [docs/archi-compatibility.md](docs/archi-compatibility.md) for the per-version analysis and what it would take to
+support older versions. Windows now; macOS uses the same plugin, see below.
 
 ---
 

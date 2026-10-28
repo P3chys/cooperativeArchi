@@ -176,6 +176,32 @@ class SharedModelTest {
     }
 
     @Test
+    void deletionOnBranchIsMergedBack() throws Exception {
+        try (SharedModel a = shareAsAlice()) {
+            a.createBranch("draft");
+            a.sync(alice);
+            a.loadBranchContent(a.switchBranch("main"));
+            edit(a, "id=\"id-proc\"/>", "id=\"id-proc\"/><element xsi:type=\"archimate:BusinessActor\" name=\"Temp\" id=\"id-temp\"/>");
+            a.sync(alice);
+
+            a.loadBranchContent(a.switchBranch("draft"));
+            edit(a, "name=\"Customer\"", "name=\"Client\"");
+            a.sync(alice);
+            a.applySync(a.sync(alice.withMergeFrom("main")));
+            assertThat(semantic(a)).contains("id-temp");
+            edit(a, "<element xsi:type=\"archimate:BusinessActor\" name=\"Temp\" id=\"id-temp\"/>", "");
+            a.sync(alice);
+
+            a.loadBranchContent(a.switchBranch("main"));
+            edit(a, "name=\"CRM\"", "name=\"Salesforce\"");
+            a.sync(alice);
+            assertThat(semantic(a)).contains("id-temp");
+            a.applySync(a.sync(alice.withMergeFrom("draft")));
+            assertThat(semantic(a)).doesNotContain("id-temp");
+        }
+    }
+
+    @Test
     void offlineSyncCommitsLocallyAndUploadsLater() throws Exception {
         try (SharedModel a = shareAsAlice()) {
             String realRemote = a.remoteUrl();

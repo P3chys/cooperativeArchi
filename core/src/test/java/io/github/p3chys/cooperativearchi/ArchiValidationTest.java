@@ -9,10 +9,13 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -30,12 +33,18 @@ import io.github.p3chys.cooperativearchi.model.SplitLayout;
 class ArchiValidationTest {
 
     private static Path archi;
+    /**
+     * Archi's own configuration and workspace for these runs. Never the developer's: Archi clears its configuration
+     * area on exit, which would pull the installed plug-ins from under an Archi that is open. Not a @TempDir, because
+     * Archi keeps native libraries in it locked for a moment after it exits.
+     */
+    private static Path archiAreas;
 
     @TempDir
     Path tmp;
 
     @BeforeAll
-    static void findArchi() {
+    static void findArchi() throws IOException {
         String home = System.getProperty("archiHome", "");
         Path dir = home.isBlank() ? null : Path.of(home);
         for (String exe : List.of("Archi.exe", "Archi", "../MacOS/Archi")) {
@@ -44,6 +53,19 @@ class ArchiValidationTest {
             }
         }
         Assumptions.assumeTrue(archi != null, "Archi not found at archiHome=" + home);
+        archiAreas = Files.createTempDirectory("cooparchi-archi");
+    }
+
+    @AfterAll
+    static void removeArchiAreas() {
+        if (archiAreas == null) {
+            return;
+        }
+        try (Stream<Path> paths = Files.walk(archiAreas)) {
+            paths.sorted(Comparator.reverseOrder()).forEach(p -> p.toFile().delete()); // best effort, see archiAreas
+        } catch (IOException e) {
+            // left for the OS temp cleanup
+        }
     }
 
     @Test
@@ -100,6 +122,8 @@ class ArchiValidationTest {
         List<String> cmd = new ArrayList<>(List.of(archi.toString(), "-application", "com.archimatetool.commandline.app",
                 "-consoleLog", "-nosplash"));
         cmd.addAll(List.of(args));
+        cmd.addAll(List.of("--launcher.appendVmargs", "-vmargs", "-Dosgi.instance.area=" + archiAreas.resolve("instance"),
+                "-Dosgi.configuration.area=" + archiAreas.resolve("config")));
         Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
         String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         assertThat(p.waitFor(3, TimeUnit.MINUTES)).isTrue();

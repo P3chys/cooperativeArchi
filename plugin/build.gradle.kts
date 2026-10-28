@@ -79,7 +79,38 @@ tasks.register<Copy>("installDev") {
     val home = System.getProperty("user.home")
     val dropins = if (os.contains("mac")) "$home/Library/Application Support/Archi/dropins"
         else if (os.contains("win")) "$home/AppData/Roaming/Archi/dropins" else "$home/.archi/dropins"
-    doFirst { file(dropins).listFiles { f -> f.name.startsWith(bundleId) }?.forEach { it.delete() } }
+    doFirst {
+        // Archi picks up a changed dropins folder only at start, and clears its configuration on a normal exit
+        val running = ProcessHandle.allProcesses().anyMatch { p ->
+            p.info().command().map { it.lowercase().replace('\\', '/').let { c -> c.endsWith("/archi.exe") || c.endsWith("/archi") } }
+                .orElse(false)
+        }
+        if (running) throw GradleException("Archi is running - close it (all instances) and run this again")
+        // Store apps (e.g. PowerShell 7 from the Microsoft Store) run in a sandbox that redirects writes to %APPDATA%
+        // to a private copy: the plug-in would land where only programs started from that shell can see it
+        val sandboxed = generateSequence(ProcessHandle.current().parent().orElse(null)) { it.parent().orElse(null) }
+            .mapNotNull { it.info().command().orElse(null) }
+            .firstOrNull { it.contains("\\WindowsApps\\", ignoreCase = true) }
+            // the Gradle daemon may have no live parents; the calling shell's environment still shows a Store pwsh
+            ?: System.getenv("PSModulePath")?.split(';')?.firstOrNull { it.contains("\\WindowsApps\\", ignoreCase = true) }
+        if (sandboxed != null) throw GradleException("Started from a Microsoft Store app ($sandboxed), whose sandbox " +
+            "hides %APPDATA% changes from Archi. Run it from Git Bash, cmd, Windows PowerShell, or a PowerShell 7 " +
+            "installed with winget/MSI.")
+        // an old copy left behind keeps being loaded by Archi, so a file that cannot be removed is an error
+        file(dropins).listFiles { f -> f.name.startsWith(bundleId) }?.forEach {
+            if (!it.delete()) throw GradleException("Cannot remove $it - close Archi (all instances) and run it again")
+        }
+        // Archi only reinstalls dropins it believes changed. Its notes can outlive the installed list (e.g. after its
+        // configuration was cleared under a running Archi), and then the plug-in silently stays out: forget them, for
+        // this Archi and the second instances of `just second-archi` (Archi-<name>)
+        val data = file(dropins).parentFile
+        (listOf(data) + data.parentFile.listFiles { f -> f.isDirectory && f.name.startsWith(data.name + "-") }.orEmpty())
+            .map { it.resolve("config/org.eclipse.osgi") }.filter { it.isDirectory }
+            .forEach { osgi ->
+                osgi.walkTopDown().filter { it.isFile && (it.name == "cache.timestamps" || it.name.startsWith("timestamps")) }
+                    .forEach { it.delete() }
+            }
+    }
     from(tasks.jar)
     into(dropins)
 }

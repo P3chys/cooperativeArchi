@@ -105,9 +105,16 @@ Needs JDK 21 and a local Archi installation (its jars are the compile target; de
 just test        # core unit + two-analyst sync tests; also opens merged models in real Archi if found
 ./gradlew :plugin:test   # in-place model update (headless, on the Archi model jars from archiHome)
 just plugin      # build/dist/cooperativeArchi-<version>.archiplugin
-just install     # copy the plugin into your Archi dropins folder (restart Archi)
+just install     # copy the plugin into your Archi dropins folder (close Archi first, then start it again)
+just second-archi [name]       # Windows: a second Archi as another analyst, to try live collaboration on one machine
 just cli sync <workspaceDir>   # command line client (also: share, clone, log, branch, switch, merge)
 ```
+
+**Windows: don't use PowerShell 7 from the Microsoft Store for `just install` / `just second-archi`, or to start Archi.**
+Store apps run in a sandbox that redirects their writes to `%APPDATA%` (where Archi keeps dropins and settings) into a
+private copy, and every program they start inherits it. A plug-in installed from there is invisible to Archi started
+from the Start menu, and an Archi started from there doesn't see the real plug-ins. Use Git Bash, cmd, Windows PowerShell,
+or PowerShell 7 installed with winget/MSI. `just install` refuses to run in that sandbox.
 
 The CLI reads the token from `COOPARCHI_TOKEN` (or `GITHUB_TOKEN`) and the author from `COOPARCHI_NAME` /
 `COOPARCHI_EMAIL`. It is handy for scripting, CI and support.

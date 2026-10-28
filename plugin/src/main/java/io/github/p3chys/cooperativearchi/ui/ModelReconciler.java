@@ -37,7 +37,7 @@ import io.github.p3chys.cooperativearchi.model.SplitLayout;
  * selection and the user's undo stack survive incoming changes (no close and reopen).
  *
  * <p>Objects with an id keep their Java identity (moved, not recreated); objects without one (bounds, properties,
- * bendpoints...) are matched by position. Changes are made directly on EMF, outside the command stack, and Archi's
+ * bendpoints...) are values, kept when unchanged and otherwise replaced. Changes are made directly on EMF, outside the command stack, and Archi's
  * derived caches (relationship ends, diagram connection targets) are kept consistent. Pure EMF, no UI.
  */
 final class ModelReconciler {
@@ -48,6 +48,8 @@ final class ModelReconciler {
     private final Map<String, EObject> live = new HashMap<>();
     /** Incoming object to the live object that now represents it. */
     private final Map<EObject, EObject> counterpart = new LinkedHashMap<>();
+    /** Live objects created for ids that are new. */
+    private final Set<EObject> fresh = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
 
     private ModelReconciler() {
     }
@@ -76,9 +78,18 @@ final class ModelReconciler {
                 it.remove();
             }
         }
+        // new objects exist up front, so a new object's references can be set before it is attached
+        in.forEach((id, o) -> {
+            if (!live.containsKey(id)) {
+                EObject m = EcoreUtil.create(o.eClass());
+                ((IIdentifier) m).setId(id);
+                live.put(id, m);
+                fresh.add(m);
+            }
+        });
         counterpart.put(incoming, target);
         syncContents(incoming, target);
-        // references last, when every object they can point to exists
+        // references of existing objects last, when every object they can point to is in place
         counterpart.forEach(this::syncReferences);
     }
 
@@ -96,6 +107,11 @@ final class ModelReconciler {
     /** Attributes and contained objects, recursively. New sub trees are complete before they are attached. */
     @SuppressWarnings("unchecked")
     private void syncContents(EObject src, EObject dst) {
+        if (fresh.contains(dst)) {
+            // as Archi's own commands do: a connection or relationship is complete (both ends set) when it appears,
+            // otherwise the diagram draws a connection without its target and does not repair it
+            syncReferences(src, dst);
+        }
         for (EAttribute a : src.eClass().getEAllAttributes()) {
             if (!skip(a) && a != P.getIdentifier_Id()) {
                 copy(src, dst, a);
@@ -140,13 +156,10 @@ final class ModelReconciler {
         EObject m;
         if (id != null) {
             m = live.get(id);
-            if (m == null) {
-                m = EcoreUtil.create(src.eClass());
-                ((IIdentifier) m).setId(id);
-                live.put(id, m);
-            }
         } else if (atSamePosition != null && !(atSamePosition instanceof IIdentifier)
-                && atSamePosition.eClass() == src.eClass()) {
+                && atSamePosition.eClass() == src.eClass() && EcoreUtil.equals(src, atSamePosition)) {
+            // objects without id (bounds, bendpoints, properties...) are values: kept only when unchanged, else
+            // replaced as Archi's commands do; the diagram redraws a moved figure only when its bounds are replaced
             m = atSamePosition;
         } else {
             m = EcoreUtil.create(src.eClass());

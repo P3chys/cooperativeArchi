@@ -15,4 +15,5 @@ jobs:
       - uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: "21" }
       - uses: gradle/actions/setup-gradle@v5
-      - run: ./gradlew :core:build :core:cliJar -ParchiHome=none -ParchiTarget=${{ matrix.archiTarget }}
+      - shell: bash # PowerShell would split -ParchiTarget=5.4 at the dot
+        run: ./gradlew :core:build :core:cliJar -ParchiHome=none -ParchiTarget=${{ matrix.archiTarget }}

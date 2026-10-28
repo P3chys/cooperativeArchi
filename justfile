@@ -1,6 +1,6 @@
 set windows-shell := ["pwsh", "-NoLogo", "-NoProfile", "-Command"]
 
-gw := if os_family() == "windows" { ".\gradlew.bat" } else { "./gradlew" }
+gw := if os_family() == "windows" { '.\gradlew.bat' } else { "./gradlew" }
 
 # list recipes
 default:

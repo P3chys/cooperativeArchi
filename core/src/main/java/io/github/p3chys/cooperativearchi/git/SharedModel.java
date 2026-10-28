@@ -32,6 +32,7 @@ import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.dircache.DirCacheBuilder;
 import org.eclipse.jgit.dircache.DirCacheEntry;
 import org.eclipse.jgit.lib.CommitBuilder;
+import org.eclipse.jgit.lib.ConfigConstants;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
@@ -177,6 +178,11 @@ public final class SharedModel implements AutoCloseable {
         Path gitDir = workspaceDir.resolve(GIT_DIR);
         Repository r = FileRepositoryBuilder.create(gitDir.toFile());
         r.create(true);
+        // run automatic gc inside the fetch that triggers it: a detached gc thread can still be writing
+        // into the git dir after close(), e.g. while a failed clone deletes the workspace
+        StoredConfig cfg = r.getConfig();
+        cfg.setBoolean(ConfigConstants.CONFIG_GC_SECTION, null, ConfigConstants.CONFIG_KEY_AUTODETACH, false);
+        cfg.save();
         try {
             Files.setAttribute(gitDir, "dos:hidden", true);
         } catch (UnsupportedOperationException | IOException e) {
@@ -723,8 +729,8 @@ public final class SharedModel implements AutoCloseable {
     private static void deleteRecursively(Path dir) {
         try (var s = Files.walk(dir)) {
             s.sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
-        } catch (IOException e) {
-            // best effort
+        } catch (IOException | java.io.UncheckedIOException e) {
+            // best effort (files can vanish while walking)
         }
     }
 

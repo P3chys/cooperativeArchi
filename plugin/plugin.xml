@@ -60,6 +60,11 @@
             <command commandId="io.github.p3chys.cooperativearchi.history" icon="icons/history.png" tooltip="History"/>
          </toolbar>
       </menuContribution>
+      <menuContribution locationURI="toolbar:org.eclipse.ui.trim.status">
+         <toolbar id="io.github.p3chys.cooperativearchi.statusbar">
+            <control id="io.github.p3chys.cooperativearchi.liveStatus" class="io.github.p3chys.cooperativearchi.ui.LiveStatus"/>
+         </toolbar>
+      </menuContribution>
       <menuContribution locationURI="popup:com.archimatetool.editor.treeModelView?after=additions">
          <separator name="io.github.p3chys.cooperativearchi.popup" visible="true"/>
          <command commandId="io.github.p3chys.cooperativearchi.sync" icon="icons/sync.png"/>

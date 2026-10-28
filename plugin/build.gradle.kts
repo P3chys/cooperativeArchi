@@ -19,9 +19,27 @@ val archiPlugins = fileTree(archiHome) {
     include("plugins/*.jar", "plugins/*/*.jar", "Contents/Eclipse/plugins/*.jar", "Contents/Eclipse/plugins/*/*.jar")
 }
 
+// Archi's model bundle is plain EMF: enough to load, change and save models headlessly in unit tests.
+val archiModelJars = fileTree(archiHome) {
+    for (dir in listOf("plugins", "Contents/Eclipse/plugins")) {
+        include("$dir/com.archimatetool.model_*/*.jar", "$dir/org.eclipse.emf.common_*.jar",
+            "$dir/org.eclipse.emf.ecore_*.jar", "$dir/org.eclipse.emf.ecore.xmi_*.jar", "$dir/org.eclipse.osgi_*.jar")
+    }
+}
+
 dependencies {
     implementation(project(":core"))
     compileOnly(archiPlugins)
+    testImplementation(archiModelJars)
+    testImplementation(platform("org.junit:junit-bom:5.13.4"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testImplementation("org.assertj:assertj-core:3.27.6")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+tasks.test {
+    useJUnitPlatform()
+    testLogging { events("failed"); exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL }
 }
 
 val core = project(":core")

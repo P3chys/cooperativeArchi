@@ -19,6 +19,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -82,9 +83,9 @@ public final class SharedModel implements AutoCloseable {
     private static final int PUSH_ATTEMPTS = 5;
     private static final Map<Path, ReentrantLock> LOCKS = new ConcurrentHashMap<>();
 
-    private final Path modelFile;
-    private final Repository repo;
-    private final Map<ObjectId, ModelGraph> graphCache = new LinkedHashMap<>(16, 0.75f, true) {
+    // parsed models by tree id; trees are content-addressed, so this is shared by all instances (the plugin
+    // opens a new one per sync) and the graphs are never modified
+    private static final Map<ObjectId, ModelGraph> GRAPHS = new LinkedHashMap<>(16, 0.75f, true) {
         private static final long serialVersionUID = 1L;
 
         @Override
@@ -92,6 +93,9 @@ public final class SharedModel implements AutoCloseable {
             return size() > 8;
         }
     };
+
+    private final Path modelFile;
+    private final Repository repo;
 
     private SharedModel(Path modelFile, Repository repo) {
         this.modelFile = modelFile;
@@ -306,6 +310,7 @@ public final class SharedModel implements AutoCloseable {
             if (loaded == null || !treeOf(loaded).equals(localTree)) {
                 ModelGraph before = loaded == null ? null : graph(loaded);
                 ModelGraph saved = SplitLayout.read(files);
+                cacheGraph(localTree, saved);
                 String summary = loaded == null ? "First version of '" + saved.root().name() + "'"
                         : ChangeSummary.of(before, saved).toString();
                 String message = o.message() != null && !o.message().isBlank() ? o.message().trim()
@@ -326,6 +331,9 @@ public final class SharedModel implements AutoCloseable {
                 result = mergeCommits(ins, result, other, "branch '" + o.mergeFrom() + "'", o, res);
             }
             setRef(branch, result);
+            if (loaded == null) {
+                pack();
+            }
 
             if (remoteUrl() != null) {
                 for (int attempt = 1;; attempt++) {
@@ -426,7 +434,9 @@ public final class SharedModel implements AutoCloseable {
         }
         ModelGraph merged = session.finish();
         res.notes.addAll(session.notes());
-        ObjectId tree = writeTree(SplitLayout.write(merged), ins);
+        Map<String, byte[]> files = SplitLayout.write(merged);
+        ObjectId tree = writeTree(files, ins);
+        cacheGraph(tree, SplitLayout.read(files)); // read back, so it is exactly what graph() would return
         String message = "Merge " + label + ": " + ChangeSummary.of(gm, merged);
         return commit(ins, tree, message, o.author(), new ObjectId[] { mine, theirs });
     }
@@ -438,6 +448,47 @@ public final class SharedModel implements AutoCloseable {
             w.markStart(w.parseCommit(b));
             RevCommit base = w.next();
             return base == null ? null : base.getId();
+        }
+    }
+
+    /**
+     * The commit the current branch points to on the server, without downloading anything (one ls-remote,
+     * cheap enough to poll every few seconds). Null if the branch does not exist there or there is no remote.
+     */
+    public ObjectId remoteHead(SyncOptions o) throws IOException {
+        String url = remoteUrl();
+        if (url == null) {
+            return null;
+        }
+        try {
+            Ref ref = Git.lsRemoteRepository().setRemote(url).setHeads(true).setCredentialsProvider(o.credentials())
+                    .callAsMap().get(R_HEADS + branch());
+            return ref == null ? null : ref.getObjectId();
+        } catch (TransportException e) {
+            throw new IOException(friendly(e), e);
+        } catch (GitAPIException e) {
+            throw new IOException("Cannot read the server state: " + e.getMessage(), e);
+        }
+    }
+
+    /** True if colleagues uploaded something since the last sync, i.e. a sync would receive changes. */
+    public boolean remoteMoved(SyncOptions o) throws IOException {
+        if (remoteUrl() == null) {
+            return false;
+        }
+        ObjectId known = repo.resolve(R_REMOTES + REMOTE + "/" + branch());
+        return !Objects.equals(remoteHead(o), known);
+    }
+
+    /**
+     * Packs the objects. The first version is thousands of loose files, which are slow to read back (every
+     * merge does) and to upload; later syncs add few objects and automatic gc packs them eventually.
+     */
+    private void pack() {
+        try {
+            Git.wrap(repo).gc().call();
+        } catch (GitAPIException | RuntimeException e) {
+            // best effort: the objects are fine unpacked
         }
     }
 
@@ -645,12 +696,22 @@ public final class SharedModel implements AutoCloseable {
 
     private ModelGraph graph(ObjectId commit) throws IOException {
         ObjectId tree = treeOf(commit);
-        ModelGraph cached = graphCache.get(tree);
+        ModelGraph cached;
+        synchronized (GRAPHS) {
+            cached = GRAPHS.get(tree);
+        }
         if (cached == null) {
             cached = SplitLayout.read(readTree(tree));
-            graphCache.put(tree, cached);
+            cacheGraph(tree, cached);
         }
         return cached;
+    }
+
+    /** Records the graph of a tree; must equal what {@link #graph} would read from it. */
+    private static void cacheGraph(ObjectId tree, ModelGraph g) {
+        synchronized (GRAPHS) {
+            GRAPHS.put(tree.copy(), g);
+        }
     }
 
     private Map<String, byte[]> readTree(ObjectId tree) throws IOException {

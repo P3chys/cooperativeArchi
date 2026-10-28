@@ -23,6 +23,12 @@ public final class Prefs {
     public static final String SYNC_ON_SAVE = "syncOnSave";
     public static final String SYNC_MINUTES = "syncMinutes";
     public static final String ASK_MESSAGE = "askMessage";
+    /** Live collaboration: autosave after a short pause, sync on save, look for colleagues' changes every few seconds. */
+    public static final String LIVE = "live";
+    public static final String LIVE_IDLE_TENTHS = "liveIdleTenths";
+    public static final String LIVE_POLL_SECONDS = "livePollSeconds";
+    public static final int DEFAULT_LIVE_IDLE_TENTHS = 15;
+    public static final int DEFAULT_LIVE_POLL_SECONDS = 3;
     private static final String SECURE_NODE = Activator.ID;
     private static final String TOKEN = "githubToken";
 

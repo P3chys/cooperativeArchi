@@ -55,6 +55,16 @@ will create new shared models), paste it, *Verify and save*. The token is stored
 Shared models are kept in `Documents/Archi/cooperativeArchi/<model>/` (configurable in
 *Preferences > Collaboration*). Sync often: small, frequent syncs mean fewer conflicts.
 
+### Live collaboration
+
+Turn on **Preferences > Collaboration > Live collaboration** to see each other's work within seconds, without pressing
+Sync. The plugin then saves a shared model after a short pause in editing (1.5 s by default), uploads the change, and
+checks GitHub every few seconds (3 s by default) for colleagues' changes. Incoming changes are applied **into the open
+model**: views stay open, your selection stays, and Ctrl+Z still undoes only your own edits. The status bar shows
+*Live ● synced 4 s ago*; hover it to see what came in last. If GitHub can't be reached, you get one notice, your work
+keeps being saved locally, and it goes up as soon as the connection is back. With everyone in live mode, a change
+usually reaches colleagues in 4–9 seconds. No server is needed besides GitHub.
+
 **Conflicts:** the dialog lists only the things both of you changed differently. Click the version to keep in each row
 (*Keep all mine / Keep all theirs* for bulk), then *Apply and sync*. *Cancel* changes nothing.
 
@@ -75,7 +85,9 @@ download and open in Archi without the plugin.
 Sync = commit the saved file on top of the version you last loaded, then a 3-way merge of *objects* (not text lines)
 with the local branch and with GitHub, then upload. The model file is only overwritten when Archi has no unsaved
 changes and the file did not change during the sync, so nothing you typed can be lost; anything not loaded yet is
-merged on the next Sync.
+merged on the next Sync. The open model is then updated in place: only the objects that changed are touched, matched by
+id, outside Archi's undo stack. A check confirms the result equals the merged file; if it doesn't, the model is
+closed and reopened instead.
 
 Code layout:
 
@@ -91,6 +103,7 @@ Needs JDK 21 and a local Archi installation (its jars are the compile target; de
 
 ```bash
 just test        # core unit + two-analyst sync tests; also opens merged models in real Archi if found
+./gradlew :plugin:test   # in-place model update (headless, on the Archi model jars from archiHome)
 just plugin      # build/dist/cooperativeArchi-<version>.archiplugin
 just install     # copy the plugin into your Archi dropins folder (restart Archi)
 just cli sync <workspaceDir>   # command line client (also: share, clone, log, branch, switch, merge)

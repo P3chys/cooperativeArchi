@@ -24,6 +24,9 @@ public class CollaborationPreferencePage extends PreferencePage implements IWork
     private Button syncOnSave;
     private Spinner minutes;
     private Button askMessage;
+    private Button live;
+    private Spinner idle;
+    private Spinner poll;
 
     @Override
     public void init(IWorkbench workbench) {
@@ -66,6 +69,19 @@ public class CollaborationPreferencePage extends PreferencePage implements IWork
             }
         });
 
+        live = new Button(c, SWT.CHECK);
+        live.setText("Live collaboration: save automatically and exchange changes with colleagues every few seconds");
+        GridDataFactory.fillDefaults().span(3, 1).indent(0, 10).applyTo(live);
+        new Label(c, SWT.NONE).setText("Save after a pause in editing of (seconds):");
+        idle = new Spinner(c, SWT.BORDER);
+        idle.setValues(Prefs.DEFAULT_LIVE_IDLE_TENTHS, 5, 100, 1, 5, 10);
+        new Label(c, SWT.NONE);
+        new Label(c, SWT.NONE).setText("Look for colleagues' changes every (seconds):");
+        poll = new Spinner(c, SWT.BORDER);
+        poll.setValues(Prefs.DEFAULT_LIVE_POLL_SECONDS, 2, 120, 0, 1, 10);
+        new Label(c, SWT.NONE);
+        live.addListener(SWT.Selection, e -> enableLive());
+
         syncOnSave = new Button(c, SWT.CHECK);
         syncOnSave.setText("Sync automatically every time a shared model is saved");
         GridDataFactory.fillDefaults().span(3, 1).indent(0, 10).applyTo(syncOnSave);
@@ -94,6 +110,16 @@ public class CollaborationPreferencePage extends PreferencePage implements IWork
         syncOnSave.setSelection(Prefs.flag(Prefs.SYNC_ON_SAVE, false));
         minutes.setSelection(Prefs.number(Prefs.SYNC_MINUTES, 0));
         askMessage.setSelection(Prefs.flag(Prefs.ASK_MESSAGE, false));
+        live.setSelection(Prefs.flag(Prefs.LIVE, false));
+        idle.setSelection(Prefs.number(Prefs.LIVE_IDLE_TENTHS, Prefs.DEFAULT_LIVE_IDLE_TENTHS));
+        poll.setSelection(Prefs.number(Prefs.LIVE_POLL_SECONDS, Prefs.DEFAULT_LIVE_POLL_SECONDS));
+        enableLive();
+    }
+
+    private void enableLive() {
+        idle.setEnabled(live.getSelection());
+        poll.setEnabled(live.getSelection());
+        syncOnSave.setEnabled(!live.getSelection()); // live mode always syncs on save
     }
 
     @Override
@@ -101,6 +127,10 @@ public class CollaborationPreferencePage extends PreferencePage implements IWork
         syncOnSave.setSelection(false);
         minutes.setSelection(0);
         askMessage.setSelection(false);
+        live.setSelection(false);
+        idle.setSelection(Prefs.DEFAULT_LIVE_IDLE_TENTHS);
+        poll.setSelection(Prefs.DEFAULT_LIVE_POLL_SECONDS);
+        enableLive();
         super.performDefaults();
     }
 
@@ -112,6 +142,9 @@ public class CollaborationPreferencePage extends PreferencePage implements IWork
         Prefs.put(Prefs.SYNC_ON_SAVE, syncOnSave.getSelection());
         Prefs.put(Prefs.SYNC_MINUTES, minutes.getSelection());
         Prefs.put(Prefs.ASK_MESSAGE, askMessage.getSelection());
+        Prefs.put(Prefs.LIVE, live.getSelection());
+        Prefs.put(Prefs.LIVE_IDLE_TENTHS, idle.getSelection());
+        Prefs.put(Prefs.LIVE_POLL_SECONDS, poll.getSelection());
         AutoSync.reschedule();
         return true;
     }

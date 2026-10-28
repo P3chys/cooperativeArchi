@@ -4,6 +4,8 @@ import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.eclipse.core.runtime.IProgressMonitor;
@@ -16,6 +18,7 @@ import org.eclipse.jface.window.Window;
 import org.eclipse.jgit.transport.CredentialsProvider;
 import org.eclipse.swt.widgets.Display;
 
+import com.archimatetool.editor.model.IArchiveManager;
 import com.archimatetool.editor.model.IEditorModelManager;
 import com.archimatetool.model.IArchimateModel;
 
@@ -47,6 +50,10 @@ final class SyncRunner {
 
     /** Notified after every sync / branch / restore operation (e.g. to refresh the history view). */
     static final List<Runnable> LISTENERS = new CopyOnWriteArrayList<>();
+
+    /** Model files being synchronized, and those to sync again once that is done. */
+    private static final Set<Path> BUSY = ConcurrentHashMap.newKeySet();
+    private static final Set<Path> PENDING = ConcurrentHashMap.newKeySet();
 
     private SyncRunner() {
     }
@@ -101,6 +108,17 @@ final class SyncRunner {
             options = options.withMessage(d.getValue());
         }
 
+        if (!BUSY.add(file)) {
+            // automatic: run once more when the current sync is done, so nothing saved meanwhile waits for the next edit
+            if (interactive) {
+                MessageDialog.openInformation(ModelSupport.shell(), "Sync", "'" + model.getName()
+                        + "' is being synchronized right now. Try again in a moment.");
+            } else {
+                PENDING.add(file);
+            }
+            return new Outcome(model, false);
+        }
+
         SyncOptions finalOptions = options;
         SyncResult[] result = new SyncResult[1];
         Exception[] error = new Exception[1];
@@ -137,6 +155,24 @@ final class SyncRunner {
     }
 
     private static Outcome finish(IArchimateModel model, Path file, Mode mode, SyncResult res, Exception error) {
+        Outcome outcome = report(model, file, mode, res, error);
+        BUSY.remove(file);
+        if (PENDING.remove(file)) {
+            for (IArchimateModel m : ModelSupport.sharedModels()) {
+                if (m.getFile().toPath().equals(file)) {
+                    Display.getDefault().asyncExec(() -> sync(m, Mode.AUTO, null));
+                }
+            }
+        }
+        return outcome;
+    }
+
+    /** True while a sync of this model file runs (the live check skips it). */
+    static boolean isBusy(Path file) {
+        return BUSY.contains(file);
+    }
+
+    private static Outcome report(IArchimateModel model, Path file, Mode mode, SyncResult res, Exception error) {
         try {
             if (error instanceof SyncCancelledException) {
                 ModelSupport.notify("Sync cancelled", "Nothing was changed.");
@@ -159,8 +195,7 @@ final class SyncRunner {
                         applied = sm.applySync(res);
                     }
                     if (applied) {
-                        IArchimateModel reloaded = ModelSupport.reload(model);
-                        current = reloaded == null ? model : reloaded;
+                        current = update(model, file);
                     } else {
                         extra = "\nYou saved during the sync: Sync again to load colleagues' changes.";
                     }
@@ -168,7 +203,13 @@ final class SyncRunner {
                     extra = "\nColleagues' changes will appear after you save and Sync again.";
                 }
             }
-            if (mode == Mode.INTERACTIVE || !res.nothingHappened()) {
+            if (mode == Mode.AUTO && AutoSync.isLive()) {
+                // live mode stays quiet: the status bar shows the state, the popup is for things that need attention
+                LiveStatus.synced(res.received(), res.offlineReason());
+                if (!res.notes().isEmpty()) {
+                    ModelSupport.notify("Synced '" + current.getName() + "'", "• " + String.join("\n• ", res.notes()));
+                }
+            } else if (mode == Mode.INTERACTIVE || !res.nothingHappened()) {
                 StringBuilder text = new StringBuilder(res.describe()).append(extra);
                 res.notes().forEach(n -> text.append("\n• ").append(n));
                 ModelSupport.notify("Synced '" + current.getName() + "'", text.toString());
@@ -180,9 +221,48 @@ final class SyncRunner {
         }
     }
 
+    /**
+     * Brings the open model up to the merged file on disk in place (editors, selection and undo survive). Falls back
+     * to closing and reopening it if that fails or does not give exactly the merged model.
+     */
+    private static IArchimateModel update(IArchimateModel model, Path file) {
+        IArchimateModel incoming = null;
+        try {
+            incoming = IEditorModelManager.INSTANCE.load(file.toFile());
+            ModelReconciler.reconcile(model, incoming);
+            IArchiveManager images = (IArchiveManager) model.getAdapter(IArchiveManager.class);
+            IArchiveManager incomingImages = (IArchiveManager) incoming.getAdapter(IArchiveManager.class);
+            for (String path : incomingImages.getLoadedImagePaths()) {
+                if (images.getBytesFromEntry(path) == null) {
+                    images.copyImageBytes(incomingImages, path);
+                }
+            }
+            Set<String> diff = ModelReconciler.differences(ModelReconciler.serialize(model), ModelReconciler.serialize(incoming));
+            if (diff.isEmpty()) {
+                return model;
+            }
+            Activator.log("In-place update left differences in " + diff + ", reopening the model", null);
+        } catch (IOException | RuntimeException e) {
+            Activator.log("In-place update failed, reopening the model", e);
+        } finally {
+            if (incoming != null && incoming.getAdapter(IArchiveManager.class) instanceof IArchiveManager am) {
+                am.dispose();
+            }
+        }
+        try {
+            IArchimateModel reloaded = ModelSupport.reload(model);
+            return reloaded == null ? model : reloaded;
+        } catch (IOException e) {
+            Activator.log("Cannot reopen the model", e);
+            return model;
+        }
+    }
+
     private static Outcome fail(IArchimateModel model, Mode mode, String message) {
         if (mode == Mode.INTERACTIVE) {
             MessageDialog.openError(ModelSupport.shell(), "Sync failed", message);
+        } else if (AutoSync.isLive()) {
+            LiveStatus.problem(message);
         } else {
             ModelSupport.notify("Automatic sync failed", message);
         }

@@ -46,7 +46,9 @@ final class AutoSync {
     static synchronized void start() {
         if (listener == null) {
             listener = e -> {
-                Object m = e.getNewValue() instanceof IArchimateModel ? e.getNewValue() : e.getOldValue();
+                // the command stack event comes from the model itself (values are dirty flags), the others carry it
+                Object m = IEditorModelManager.COMMAND_STACK_CHANGED.equals(e.getPropertyName()) ? e.getSource()
+                        : e.getNewValue() instanceof IArchimateModel ? e.getNewValue() : e.getOldValue();
                 if (!(m instanceof IArchimateModel model) || !ModelSupport.isShared(model)) {
                     return;
                 }

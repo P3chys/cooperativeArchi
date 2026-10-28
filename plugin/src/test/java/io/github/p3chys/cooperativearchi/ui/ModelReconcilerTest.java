@@ -212,9 +212,13 @@ class ModelReconcilerTest {
     private static void assertModelReconciles(String beforeXml, String after) {
         IArchimateModel live = load(beforeXml);
         Map<String, EObject> before = ids(live);
+        List<String> incomplete = watchAttachedObjects(live);
+        Map<EObject, EObject> values = snapshotValues(live);
 
         ModelReconciler.reconcile(live, load(after));
 
+        assertThat(incomplete).as("connections/relationships attached before both ends were set").isEmpty();
+        assertThat(valuesEditedInPlace(live, values)).as("objects without id changed in place instead of replaced").isEmpty();
         try {
             byte[] result = ModelReconciler.serialize(live);
             Set<String> diff = ModelReconciler.differences(result, ModelReconciler.serialize(load(after)));
@@ -285,6 +289,73 @@ class ModelReconcilerTest {
             }
         }
         return m;
+    }
+
+    /**
+     * Records every connection or relationship that becomes part of the model without both ends (and, for a
+     * connection, without being in its target's list): Archi's diagram draws it at that moment and does not repair it.
+     */
+    private static List<String> watchAttachedObjects(IArchimateModel model) {
+        List<String> incomplete = new java.util.ArrayList<>();
+        model.eAdapters().add(new EContentAdapter() {
+            @Override
+            public void notifyChanged(Notification n) {
+                super.notifyChanged(n);
+                if (n.getEventType() != Notification.ADD && n.getEventType() != Notification.ADD_MANY
+                        && n.getEventType() != Notification.SET) {
+                    return;
+                }
+                if (!(n.getFeature() instanceof org.eclipse.emf.ecore.EReference r) || !r.isContainment()) {
+                    return;
+                }
+                List<?> added = n.getNewValue() instanceof List<?> l ? l : java.util.Collections.singletonList(n.getNewValue());
+                for (Object o : added) {
+                    if (o instanceof EObject e) {
+                        check(e);
+                        e.eAllContents().forEachRemaining(this::check);
+                    }
+                }
+            }
+
+            private void check(EObject o) {
+                if (o instanceof IDiagramModelConnection c && (c.getSource() == null || c.getTarget() == null
+                        || !c.getTarget().getTargetConnections().contains(c))) {
+                    incomplete.add(c.getId());
+                }
+                if (o instanceof IDiagramModelArchimateComponent dc && dc.getArchimateConcept() == null) {
+                    incomplete.add(dc.getId()); // Archi's diagram fails to create a figure for it
+                }
+                if (o instanceof IArchimateRelationship r && (r.getSource() == null || r.getTarget() == null)) {
+                    incomplete.add(r.getId());
+                }
+            }
+        });
+        return incomplete;
+    }
+
+    /**
+     * Snapshot of the objects without id (bounds, bendpoints, properties...); {@link #valuesEditedInPlace} then lists
+     * those still in the model whose content changed. Archi's diagram only redraws a figure when such a value is
+     * replaced, as its own commands do (bounds do not even send change notifications).
+     */
+    private static Map<EObject, EObject> snapshotValues(IArchimateModel model) {
+        Map<EObject, EObject> copies = new java.util.IdentityHashMap<>();
+        model.eAllContents().forEachRemaining(o -> {
+            if (!(o instanceof IIdentifier)) {
+                copies.put(o, org.eclipse.emf.ecore.util.EcoreUtil.copy(o));
+            }
+        });
+        return copies;
+    }
+
+    private static List<String> valuesEditedInPlace(IArchimateModel model, Map<EObject, EObject> before) {
+        List<String> edited = new java.util.ArrayList<>();
+        model.eAllContents().forEachRemaining(o -> {
+            if (before.containsKey(o) && !org.eclipse.emf.ecore.util.EcoreUtil.equals(o, before.get(o))) {
+                edited.add(((IIdentifier) o.eContainer()).getId() + "/" + o.eClass().getName());
+            }
+        });
+        return edited;
     }
 
     private static AtomicInteger countNotifications(IArchimateModel model) {

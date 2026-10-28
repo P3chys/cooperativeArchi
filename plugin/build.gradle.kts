@@ -8,6 +8,12 @@ val bundleId = "io.github.p3chys.cooperativearchi"
 val qualifier = providers.gradleProperty("qualifier").getOrElse("v" + LocalDateTime.now()
     .format(DateTimeFormatter.ofPattern("yyyyMMddHHmm")))
 val bundleVersion = "${project.version}.$qualifier"
+val archiTarget = rootProject.extra["archiTarget"] as String
+val manifestValues = mapOf(
+    "version" to bundleVersion,
+    "javaRelease" to rootProject.extra["javaRelease"] as String,
+    "jgitRange" to rootProject.extra["jgitRange"] as String,
+)
 
 val archiPlugins = fileTree(archiHome) {
     include("plugins/*.jar", "plugins/*/*.jar", "Contents/Eclipse/plugins/*.jar", "Contents/Eclipse/plugins/*/*.jar")
@@ -26,18 +32,20 @@ tasks.jar {
     from(projectDir) { include("plugin.xml", "icons/**") }
     manifest {
         from("META-INF/MANIFEST.MF") {
-            eachEntry { value = value.toString().replace("\${version}", bundleVersion) }
+            eachEntry {
+                value = manifestValues.entries.fold(value.toString()) { v, (k, x) -> v.replace("\${$k}", x) }
+            }
         }
     }
-    // the manifest's ${version} must be expanded; keep the jar reproducible otherwise
-    inputs.property("bundleVersion", bundleVersion)
+    // the manifest's ${...} placeholders must be expanded; keep the jar reproducible otherwise
+    inputs.properties(manifestValues)
 }
 
 // The format Archi's "Manage Plug-ins > Install" understands: a zip with an "archi-plugin" marker entry.
 val archiplugin = tasks.register<Zip>("archiplugin") {
     group = "distribution"
     description = "Builds the installable cooperativeArchi .archiplugin file"
-    archiveFileName.set("cooperativeArchi-${project.version}.archiplugin")
+    archiveFileName.set("cooperativeArchi-${project.version}-archi$archiTarget.archiplugin")
     destinationDirectory.set(rootProject.layout.buildDirectory.dir("dist"))
     from(tasks.jar)
     from("archi-plugin") // empty marker entry

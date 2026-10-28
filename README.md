@@ -14,7 +14,7 @@ without merge conflicts in files. A lightweight alternative to coArchi.
 - **Optional auto-sync** on every save and/or every N minutes.
 - Works offline: Sync saves a local version and uploads it next time.
 
-Requires Archi 5.10+ (Windows now; macOS uses the same plugin, see below).
+Requires Archi 5.4+ (Windows and macOS use the same plugin file, see below).
 
 ---
 
@@ -22,8 +22,15 @@ Requires Archi 5.10+ (Windows now; macOS uses the same plugin, see below).
 
 ### Install (once)
 
-1. Download `cooperativeArchi-<version>.archiplugin` (from the
-   [releases page](https://github.com/P3chys/cooperativeArchi/releases) or from your admin).
+1. Download the file for your Archi version (**Help > About Archi**) from the
+   [releases page](https://github.com/P3chys/cooperativeArchi/releases) or from your admin:
+
+   | Archi       | File                                            |
+   |-------------|-------------------------------------------------|
+   | 5.4 – 5.9   | `cooperativeArchi-<version>-archi5.4.archiplugin`  |
+   | 5.10 and up | `cooperativeArchi-<version>-archi5.10.archiplugin` |
+
+   After upgrading Archi across that line, install the matching file again.
 2. In Archi: **Help > Manage Plug-ins... > Install New...**, choose the file, restart Archi.
    A **Collaboration** menu and a Sync button appear.
 

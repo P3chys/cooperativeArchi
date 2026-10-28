@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<archimate:model xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:archimate="http://www.archimatetool.com/archimate" name="Test Model" id="id-model" version="5.0.0">
+  <folder name="Business" id="id-f-business" type="business">
+    <folder name="Sub" id="id-f-sub">
+      <element xsi:type="archimate:BusinessRole" name="Insurant" id="id-role"/>
+    </folder>
+    <element xsi:type="archimate:BusinessActor" name="Customer" id="id-actor">
+      <documentation>A customer</documentation>
+      <property key="owner" value="sales"/>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="Handle Claim" id="id-proc"/>
+  </folder>
+  <folder name="Application" id="id-f-app" type="application">
+    <element xsi:type="archimate:ApplicationComponent" name="CRM" id="id-crm"/>
+  </folder>
+  <folder name="Relations" id="id-f-rel" type="relations">
+    <element xsi:type="archimate:AssignmentRelationship" id="id-r1" source="id-actor" target="id-role"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-r2" source="id-crm" target="id-proc"/>
+  </folder>
+  <folder name="Views" id="id-f-views" type="diagrams">
+    <element xsi:type="archimate:ArchimateDiagramModel" name="Main View" id="id-view">
+      <child xsi:type="archimate:DiagramObject" id="id-do-actor" archimateElement="id-actor">
+        <bounds x="24" y="24" width="120" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="id-c1" source="id-do-actor" target="id-do-role" archimateRelationship="id-r1"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-do-role" archimateElement="id-role">
+        <bounds x="240" y="24" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:Group" id="id-grp" name="Group" textAlignment="1">
+        <bounds x="24" y="120" width="400" height="200"/>
+        <child xsi:type="archimate:DiagramObject" id="id-do-crm" archimateElement="id-crm" type="1">
+          <bounds x="12" y="36" width="120" height="55"/>
+        </child>
+        <child xsi:type="archimate:Note" id="id-note">
+          <bounds x="200" y="36" width="150" height="60"/>
+          <content>Hello note</content>
+        </child>
+      </child>
+      <child xsi:type="archimate:DiagramModelReference" id="id-ref" model="id-view2">
+        <bounds x="480" y="24" width="120" height="55"/>
+      </child>
+    </element>
+    <element xsi:type="archimate:ArchimateDiagramModel" name="Second View" id="id-view2"/>
+  </folder>
+  <folder name="Strategy" id="id-f-strat" type="strategy"/>
+  <folder name="Technology &amp; Physical" id="id-f-tech" type="technology"/>
+  <folder name="Motivation" id="id-f-mot" type="motivation"/>
+  <folder name="Implementation &amp; Migration" id="id-f-impl" type="implementation_migration"/>
+  <folder name="Other" id="id-f-other" type="other"/>
+  <purpose>Test purpose</purpose>
+  <profile name="Special" id="id-prof" conceptType="BusinessActor"/>
+</archimate:model>

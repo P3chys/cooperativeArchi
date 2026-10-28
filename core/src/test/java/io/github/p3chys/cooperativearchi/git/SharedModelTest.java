@@ -1,0 +1,230 @@
+package io.github.p3chys.cooperativearchi.git;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.lib.PersonIdent;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import io.github.p3chys.cooperativearchi.TestModels;
+import io.github.p3chys.cooperativearchi.merge.Conflict.Side;
+import io.github.p3chys.cooperativearchi.model.ModelGraph;
+import io.github.p3chys.cooperativearchi.xml.Xml;
+
+/** Two analysts, Alice and Bob, working on one model through a shared (local bare) repository. */
+class SharedModelTest {
+
+    @TempDir
+    Path tmp;
+    String remote;
+    SyncOptions alice;
+    SyncOptions bob;
+
+    @BeforeEach
+    void setUp() throws Exception {
+        Path remoteDir = tmp.resolve("remote.git");
+        Git.init().setBare(true).setDirectory(remoteDir.toFile()).setInitialBranch("main").call().close();
+        remote = remoteDir.toUri().toString();
+        alice = SyncOptions.of(null, new PersonIdent("Alice", "alice@example.com"), ConflictResolver.FAIL);
+        bob = SyncOptions.of(null, new PersonIdent("Bob", "bob@example.com"), ConflictResolver.FAIL);
+    }
+
+    @Test
+    void twoAnalystsEditDifferentThingsAndConverge() throws Exception {
+        try (SharedModel a = shareAsAlice(); SharedModel b = cloneAsBob()) {
+            edit(a, "name=\"Customer\"", "name=\"Client\"");
+            edit(b, "name=\"CRM\"", "name=\"Salesforce\"");
+
+            SyncResult rb = b.sync(bob);
+            assertThat(rb.pushed()).isTrue();
+            assertThat(rb.needsReload()).isFalse();
+
+            SyncResult ra = a.sync(alice);
+            assertThat(ra.committed()).isEqualTo("Changed Business Actor 'Client'");
+            assertThat(ra.received()).contains("Salesforce");
+            assertThat(ra.pushed()).isTrue();
+            assertThat(a.applySync(ra)).isTrue();
+
+            SyncResult rb2 = b.sync(bob);
+            assertThat(rb2.received()).contains("Client");
+            assertThat(b.applySync(rb2)).isTrue();
+
+            assertThat(semantic(a)).isEqualTo(semantic(b));
+            assertThat(semantic(a)).contains("name=\"Client\"", "name=\"Salesforce\"");
+            assertThat(a.history(10)).extracting(HistoryEntry::author).contains("Alice", "Bob");
+        }
+    }
+
+    @Test
+    void syncWithoutChangesDoesNothing() throws Exception {
+        try (SharedModel a = shareAsAlice()) {
+            SyncResult r = a.sync(alice);
+            assertThat(r.nothingHappened()).isTrue();
+            assertThat(r.describe()).isEqualTo("Already up to date");
+            assertThat(a.hasLocalChanges()).isFalse();
+        }
+    }
+
+    @Test
+    void reformattedFileByArchiIsNotAChange() throws Exception {
+        try (SharedModel a = shareAsAlice(); SharedModel b = cloneAsBob()) {
+            // Bob's file is the generated snapshot; Archi re-saves it in its own formatting
+            byte[] archiStyle = TestModels.text().getBytes(StandardCharsets.UTF_8);
+            Files.write(b.modelFile(), archiStyle);
+            assertThat(b.hasLocalChanges()).isFalse();
+            assertThat(b.sync(bob).nothingHappened()).isTrue();
+        }
+    }
+
+    @Test
+    void conflictIsResolvedByChoice() throws Exception {
+        try (SharedModel a = shareAsAlice(); SharedModel b = cloneAsBob()) {
+            edit(a, "name=\"Customer\"", "name=\"Client\"");
+            edit(b, "name=\"Customer\"", "name=\"Buyer\"");
+            b.sync(bob);
+
+            SyncOptions takeTheirs = SyncOptions.of(null, alice.author(), (session, label) -> {
+                session.conflicts().forEach(c -> c.choose(Side.THEIRS));
+                return true;
+            });
+            SyncResult r = a.sync(takeTheirs);
+            assertThat(r.conflictsResolved()).isEqualTo(1);
+            a.applySync(r);
+            assertThat(semantic(a)).contains("name=\"Buyer\"");
+        }
+    }
+
+    @Test
+    void cancelledConflictChangesNothing() throws Exception {
+        try (SharedModel a = shareAsAlice(); SharedModel b = cloneAsBob()) {
+            edit(a, "name=\"Customer\"", "name=\"Client\"");
+            edit(b, "name=\"Customer\"", "name=\"Buyer\"");
+            b.sync(bob);
+            byte[] before = Files.readAllBytes(a.modelFile());
+
+            SyncOptions cancel = SyncOptions.of(null, alice.author(), (s, label) -> false);
+            assertThatThrownBy(() -> a.sync(cancel)).isInstanceOf(SyncCancelledException.class);
+
+            assertThat(Files.readAllBytes(a.modelFile())).isEqualTo(before);
+            SyncResult again = b.sync(bob);
+            assertThat(again.received()).isNull();
+        }
+    }
+
+    @Test
+    void saveDuringSyncIsNeverOverwrittenAndMergedNextTime() throws Exception {
+        try (SharedModel a = shareAsAlice(); SharedModel b = cloneAsBob()) {
+            edit(b, "name=\"CRM\"", "name=\"Salesforce\"");
+            b.sync(bob);
+
+            SyncResult r = a.sync(alice);
+            assertThat(r.needsReload()).isTrue();
+            // Alice saves while the sync was running
+            edit(a, "name=\"Customer\"", "name=\"Client\"");
+            assertThat(a.applySync(r)).isFalse();
+            assertThat(semantic(a)).contains("Client").doesNotContain("Salesforce");
+
+            SyncResult r2 = a.sync(alice);
+            assertThat(a.applySync(r2)).isTrue();
+            assertThat(semantic(a)).contains("Client", "Salesforce");
+        }
+    }
+
+    @Test
+    void deferredReloadKeepsAllWork() throws Exception {
+        try (SharedModel a = shareAsAlice(); SharedModel b = cloneAsBob()) {
+            edit(b, "name=\"CRM\"", "name=\"Salesforce\"");
+            b.sync(bob);
+            a.sync(alice); // Archi had unsaved changes: Alice does not reload
+            edit(a, "name=\"Customer\"", "name=\"Client\"");
+
+            SyncResult r = a.sync(alice);
+            assertThat(a.applySync(r)).isTrue();
+            assertThat(semantic(a)).contains("Client", "Salesforce");
+            b.applySync(b.sync(bob));
+            assertThat(semantic(b)).isEqualTo(semantic(a));
+        }
+    }
+
+    @Test
+    void branchesCanBeCreatedSwitchedAndMerged() throws Exception {
+        try (SharedModel a = shareAsAlice(); SharedModel b = cloneAsBob()) {
+            a.createBranch("draft");
+            edit(a, "name=\"Customer\"", "name=\"Client\"");
+            assertThat(a.sync(alice).pushed()).isTrue();
+
+            b.sync(bob);
+            assertThat(b.branches()).containsExactly("draft", "main");
+            assertThat(semantic(b)).doesNotContain("Client");
+
+            a.loadBranchContent(a.switchBranch("main"));
+            assertThat(semantic(a)).doesNotContain("Client");
+            SyncResult merged = a.sync(alice.withMergeFrom("draft"));
+            assertThat(a.applySync(merged)).isTrue();
+            assertThat(semantic(a)).contains("Client");
+
+            b.applySync(b.sync(bob));
+            assertThat(semantic(b)).contains("Client");
+        }
+    }
+
+    @Test
+    void offlineSyncCommitsLocallyAndUploadsLater() throws Exception {
+        try (SharedModel a = shareAsAlice()) {
+            String realRemote = a.remoteUrl();
+            a.setRemoteUrl(tmp.resolve("missing.git").toUri().toString());
+            edit(a, "name=\"Customer\"", "name=\"Client\"");
+
+            SyncResult r = a.sync(alice);
+            assertThat(r.offlineReason()).isNotNull();
+            assertThat(r.committed()).isNotNull();
+            assertThat(a.history(5).get(0).uploaded()).isFalse();
+
+            a.setRemoteUrl(realRemote);
+            assertThat(a.sync(alice).pushed()).isTrue();
+        }
+    }
+
+    @Test
+    void cloneOfEmptyRepositoryFailsClearly() {
+        assertThatThrownBy(() -> SharedModel.cloneFrom(remote, tmp.resolve("bob"), bob))
+                .hasMessageContaining("does not contain a model");
+        assertThat(tmp.resolve("bob")).doesNotExist();
+    }
+
+    // ------------------------------------------------------------ helpers
+
+    private SharedModel shareAsAlice() throws Exception {
+        Path source = tmp.resolve("source.archimate");
+        Files.writeString(source, TestModels.text());
+        SharedModel a = SharedModel.share(source, tmp.resolve("alice"), remote);
+        SyncResult first = a.sync(alice);
+        assertThat(first.committed()).isEqualTo("First version of 'Test Model'");
+        assertThat(first.pushed()).isTrue();
+        return a;
+    }
+
+    private SharedModel cloneAsBob() throws Exception {
+        return SharedModel.cloneFrom(remote, tmp.resolve("bob"), bob);
+    }
+
+    private static void edit(SharedModel m, String from, String to) throws Exception {
+        String text = Files.readString(m.modelFile());
+        assertThat(text).contains(from);
+        Files.writeString(m.modelFile(), text.replace(from, to));
+    }
+
+    /** Model content independent of formatting/order. */
+    private static String semantic(SharedModel m) throws Exception {
+        ModelGraph g = ModelGraph.read(Files.readAllBytes(m.modelFile()));
+        return new String(Xml.write(io.github.p3chys.cooperativearchi.model.SplitLayout.canonical(g).toXml()),
+                StandardCharsets.UTF_8);
+    }
+}

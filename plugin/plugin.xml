@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?eclipse version="3.4"?>
+<plugin>
+   <extension point="org.eclipse.ui.commands">
+      <category id="io.github.p3chys.cooperativearchi.category" name="Collaboration"/>
+      <command id="io.github.p3chys.cooperativearchi.sync" categoryId="io.github.p3chys.cooperativearchi.category"
+            name="Sync" description="Upload your saved changes and receive your colleagues' changes"/>
+      <command id="io.github.p3chys.cooperativearchi.syncAll" categoryId="io.github.p3chys.cooperativearchi.category"
+            name="Sync All Shared Models"/>
+      <command id="io.github.p3chys.cooperativearchi.share" categoryId="io.github.p3chys.cooperativearchi.category"
+            name="Share Model on GitHub..."/>
+      <command id="io.github.p3chys.cooperativearchi.clone" categoryId="io.github.p3chys.cooperativearchi.category"
+            name="Open Shared Model from GitHub..."/>
+      <command id="io.github.p3chys.cooperativearchi.branches" categoryId="io.github.p3chys.cooperativearchi.category"
+            name="Branches..."/>
+      <command id="io.github.p3chys.cooperativearchi.history" categoryId="io.github.p3chys.cooperativearchi.category"
+            name="History"/>
+      <command id="io.github.p3chys.cooperativearchi.signin" categoryId="io.github.p3chys.cooperativearchi.category"
+            name="GitHub Access Token..."/>
+      <command id="io.github.p3chys.cooperativearchi.openFolder" categoryId="io.github.p3chys.cooperativearchi.category"
+            name="Show Model Folder"/>
+   </extension>
+
+   <extension point="org.eclipse.ui.handlers">
+      <handler commandId="io.github.p3chys.cooperativearchi.sync" class="io.github.p3chys.cooperativearchi.ui.Handlers$Sync"/>
+      <handler commandId="io.github.p3chys.cooperativearchi.syncAll" class="io.github.p3chys.cooperativearchi.ui.Handlers$SyncAll"/>
+      <handler commandId="io.github.p3chys.cooperativearchi.share" class="io.github.p3chys.cooperativearchi.ui.Handlers$Share"/>
+      <handler commandId="io.github.p3chys.cooperativearchi.clone" class="io.github.p3chys.cooperativearchi.ui.Handlers$Clone"/>
+      <handler commandId="io.github.p3chys.cooperativearchi.branches" class="io.github.p3chys.cooperativearchi.ui.Handlers$Branches"/>
+      <handler commandId="io.github.p3chys.cooperativearchi.history" class="io.github.p3chys.cooperativearchi.ui.Handlers$History"/>
+      <handler commandId="io.github.p3chys.cooperativearchi.signin" class="io.github.p3chys.cooperativearchi.ui.Handlers$SignIn"/>
+      <handler commandId="io.github.p3chys.cooperativearchi.openFolder" class="io.github.p3chys.cooperativearchi.ui.Handlers$OpenFolder"/>
+   </extension>
+
+   <extension point="org.eclipse.ui.bindings">
+      <key commandId="io.github.p3chys.cooperativearchi.sync" schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
+            sequence="M1+M3+Y"/>
+   </extension>
+
+   <extension point="org.eclipse.ui.menus">
+      <menuContribution locationURI="menu:org.eclipse.ui.main.menu?after=tools">
+         <menu id="io.github.p3chys.cooperativearchi.menu" label="&amp;Collaboration">
+            <command commandId="io.github.p3chys.cooperativearchi.sync" icon="icons/sync.png" label="&amp;Sync"/>
+            <command commandId="io.github.p3chys.cooperativearchi.syncAll"/>
+            <separator name="share" visible="true"/>
+            <command commandId="io.github.p3chys.cooperativearchi.share" icon="icons/share.png"/>
+            <command commandId="io.github.p3chys.cooperativearchi.clone" icon="icons/clone.png"/>
+            <separator name="work" visible="true"/>
+            <command commandId="io.github.p3chys.cooperativearchi.branches" icon="icons/branch.png"/>
+            <command commandId="io.github.p3chys.cooperativearchi.history" icon="icons/history.png"/>
+            <command commandId="io.github.p3chys.cooperativearchi.openFolder"/>
+            <separator name="settings" visible="true"/>
+            <command commandId="io.github.p3chys.cooperativearchi.signin"/>
+         </menu>
+      </menuContribution>
+      <menuContribution locationURI="toolbar:org.eclipse.ui.main.toolbar?after=additions">
+         <toolbar id="io.github.p3chys.cooperativearchi.toolbar" label="Collaboration">
+            <command commandId="io.github.p3chys.cooperativearchi.sync" icon="icons/sync.png"
+                  tooltip="Sync: upload your saved changes and receive colleagues' changes"/>
+            <command commandId="io.github.p3chys.cooperativearchi.history" icon="icons/history.png" tooltip="History"/>
+         </toolbar>
+      </menuContribution>
+      <menuContribution locationURI="popup:com.archimatetool.editor.treeModelView?after=additions">
+         <separator name="io.github.p3chys.cooperativearchi.popup" visible="true"/>
+         <command commandId="io.github.p3chys.cooperativearchi.sync" icon="icons/sync.png"/>
+         <command commandId="io.github.p3chys.cooperativearchi.share" icon="icons/share.png"/>
+      </menuContribution>
+   </extension>
+
+   <extension point="org.eclipse.ui.views">
+      <category id="io.github.p3chys.cooperativearchi.views" name="Collaboration"/>
+      <view id="io.github.p3chys.cooperativearchi.historyView" category="io.github.p3chys.cooperativearchi.views"
+            class="io.github.p3chys.cooperativearchi.ui.HistoryView" icon="icons/history.png" name="Model History"/>
+   </extension>
+
+   <extension point="org.eclipse.ui.preferencePages">
+      <page id="io.github.p3chys.cooperativearchi.prefs" name="Collaboration"
+            class="io.github.p3chys.cooperativearchi.ui.CollaborationPreferencePage"/>
+   </extension>
+
+   <extension point="org.eclipse.ui.startup">
+      <startup class="io.github.p3chys.cooperativearchi.ui.Startup"/>
+   </extension>
+</plugin>

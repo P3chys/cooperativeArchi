@@ -1,0 +1,6 @@
+cooperativeArchi
+Copyright (c) 2026 Adam Pech. Licensed under the MIT License (see LICENSE).
+
+plugin/icons/sync*.png, share*.png, clone*.png are taken from the Eclipse Platform UI project
+(https://github.com/eclipse-platform/eclipse.platform.ui) and are licensed under the
+Eclipse Public License 2.0 (https://www.eclipse.org/legal/epl-2.0/).

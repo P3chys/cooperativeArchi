@@ -25,21 +25,34 @@ public final class Xml {
 
     private static final List<String> LEADING_ATTRS = List.of("xsi:type", "name", "id");
 
+    // a split model is thousands of small files: setting up a parser costs more than parsing one, so reuse it
+    private static final ThreadLocal<DocumentBuilder> BUILDER = ThreadLocal.withInitial(Xml::newBuilder);
+
     private Xml() {
     }
 
     public static XNode parse(byte[] bytes) throws IOException {
+        DocumentBuilder builder = BUILDER.get();
+        try {
+            builder.setErrorHandler(null);
+            return convert(builder.parse(new ByteArrayInputStream(bytes)).getDocumentElement());
+        } catch (SAXException e) {
+            throw new IOException("Invalid XML: " + e.getMessage(), e);
+        } finally {
+            builder.reset();
+        }
+    }
+
+    private static DocumentBuilder newBuilder() {
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             factory.setNamespaceAware(false);
             factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
             factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
             factory.setExpandEntityReferences(false);
-            DocumentBuilder builder = factory.newDocumentBuilder();
-            builder.setErrorHandler(null);
-            return convert(builder.parse(new ByteArrayInputStream(bytes)).getDocumentElement());
-        } catch (ParserConfigurationException | SAXException e) {
-            throw new IOException("Invalid XML: " + e.getMessage(), e);
+            return factory.newDocumentBuilder();
+        } catch (ParserConfigurationException e) {
+            throw new IllegalStateException(e);
         }
     }
 

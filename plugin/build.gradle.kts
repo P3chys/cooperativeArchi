@@ -40,7 +40,7 @@ val archiplugin = tasks.register<Zip>("archiplugin") {
     archiveFileName.set("cooperativeArchi-${project.version}.archiplugin")
     destinationDirectory.set(rootProject.layout.buildDirectory.dir("dist"))
     from(tasks.jar)
-    from(resources.text.fromString("").asFile()) { rename { "archi-plugin" } }
+    from("archi-plugin") // empty marker entry
 }
 
 tasks.assemble { dependsOn(archiplugin) }

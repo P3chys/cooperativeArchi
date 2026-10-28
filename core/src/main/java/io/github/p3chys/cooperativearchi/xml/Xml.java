@@ -88,14 +88,14 @@ public final class Xml {
     }
 
     private static void write(StringBuilder sb, XNode node, int depth) {
-        sb.repeat("  ", depth).append('<').append(node.tag());
+        sb.append("  ".repeat(depth)).append('<').append(node.tag());
         canonicalOrder(node.attrs()).forEach((k, v) -> sb.append(' ').append(k).append("=\"").append(escape(v, true)).append('"'));
         if (!node.children().isEmpty()) {
             sb.append(">\n");
             for (XNode child : node.children()) {
                 write(sb, child, depth + 1);
             }
-            sb.repeat("  ", depth).append("</").append(node.tag()).append(">\n");
+            sb.append("  ".repeat(depth)).append("</").append(node.tag()).append(">\n");
         } else if (!node.text().isEmpty()) {
             sb.append('>').append(escape(node.text(), false)).append("</").append(node.tag()).append(">\n");
         } else {

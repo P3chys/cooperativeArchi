@@ -1,6 +1,6 @@
 set windows-shell := ["pwsh", "-NoLogo", "-NoProfile", "-Command"]
 
-gw := if os_family() == "windows" { ".\gradlew.bat" } else { "./gradlew" }
+gw := if os_family() == "windows" { '.\gradlew.bat' } else { "./gradlew" }
 
 # list recipes
 default:
@@ -10,9 +10,14 @@ default:
 test *args:
     {{gw}} :core:test {{args}}
 
-# build the installable .archiplugin into build/dist
-plugin:
-    {{gw}} :plugin:archiplugin
+# build the installable .archiplugin into build/dist (target: Archi line, 5.4 or 5.10)
+plugin target="5.10":
+    {{gw}} :plugin:archiplugin "-ParchiTarget={{target}}"
+
+# build the .archiplugin for every supported Archi line (release files)
+dist:
+    {{gw}} :plugin:archiplugin "-ParchiTarget=5.4"
+    {{gw}} :plugin:archiplugin "-ParchiTarget=5.10"
 
 # install the plugin into the local Archi dropins folder (restart Archi afterwards)
 install:
@@ -23,6 +28,7 @@ cli *args:
     {{gw}} -q :core:cliJar
     java -jar core/build/libs/cooperativearchi-cli.jar {{args}}
 
-# everything: tests + plugin + cli
+# everything: tests + plugin + cli, for every supported Archi line
 check:
-    {{gw}} build :core:cliJar
+    {{gw}} build :core:cliJar "-ParchiTarget=5.4"
+    {{gw}} build :core:cliJar "-ParchiTarget=5.10"

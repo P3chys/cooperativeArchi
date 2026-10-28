@@ -1,6 +1,6 @@
 // Pure Java engine (no Eclipse/SWT): model split/merge and git sync.
-// JGit version matches the bundle shipped with Archi 5.10.
-val jgitVersion = "7.7.0.202606012155-r"
+// JGit version matches the bundle shipped with the Archi line we build for (see archiTarget in the root build).
+val jgitVersion = rootProject.extra["jgitVersion"] as String
 
 dependencies {
     implementation("org.eclipse.jgit:org.eclipse.jgit:$jgitVersion")

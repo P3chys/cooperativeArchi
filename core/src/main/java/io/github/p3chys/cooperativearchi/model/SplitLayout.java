@@ -123,6 +123,9 @@ public final class SplitLayout {
         for (Map.Entry<String, byte[]> e : files.entrySet()) {
             String path = e.getKey();
             if (path.startsWith(IMAGES_DIR)) {
+                if (path.contains("..") || path.contains("\\")) {
+                    throw new IOException("Invalid image path: " + path);
+                }
                 images.put(path, e.getValue());
                 continue;
             }

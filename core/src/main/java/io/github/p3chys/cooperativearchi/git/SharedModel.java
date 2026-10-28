@@ -662,14 +662,12 @@ public final class SharedModel implements AutoCloseable {
         return files;
     }
 
+    /**
+     * The .archimate content of a version, always rebuilt from the split files (the source of truth that the
+     * merge uses), never taken from the stored snapshot, so a hand-edited snapshot cannot smuggle in content.
+     */
     private byte[] snapshot(ObjectId commit) throws IOException {
-        ObjectId tree = treeOf(commit);
-        try (TreeWalk tw = TreeWalk.forPath(repo, SplitLayout.SNAPSHOT_FILE, tree)) {
-            if (tw != null) {
-                return repo.open(tw.getObjectId(0)).openStream().readAllBytes();
-            }
-        }
-        return SplitLayout.read(readTree(tree)).write();
+        return graph(commit).write();
     }
 
     private static ObjectId writeTree(Map<String, byte[]> files, ObjectInserter ins) throws IOException {

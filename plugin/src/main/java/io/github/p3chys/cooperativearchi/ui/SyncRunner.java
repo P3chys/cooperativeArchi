@@ -195,13 +195,20 @@ final class SyncRunner {
     }
 
     /**
-     * Credentials for https remotes. Interactive: asks for a token when none is stored.
+     * Credentials for https://github.com remotes (never for other hosts). Interactive: asks for a token when none is stored.
      *
      * @throws IllegalStateException if a token is needed but the user did not provide one
      */
     static CredentialsProvider credentials(String remoteUrl, boolean interactive) {
-        if (remoteUrl == null || !remoteUrl.startsWith("http")) {
-            return null;
+        if (remoteUrl == null || !remoteUrl.contains("://") || remoteUrl.startsWith("file:")) {
+            return null; // local repository: no credentials needed
+        }
+        if (!GitHubClient.isGitHubUrl(remoteUrl)) {
+            if (interactive) {
+                MessageDialog.openError(ModelSupport.shell(), "Collaboration",
+                        "Only https://github.com repositories are supported. Your GitHub token is never sent to: " + remoteUrl);
+            }
+            throw new IllegalStateException("Unsupported remote");
         }
         String token = Prefs.token();
         if ((token == null || token.isBlank()) && interactive) {

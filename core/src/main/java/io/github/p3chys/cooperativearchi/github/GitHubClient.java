@@ -40,6 +40,20 @@ public final class GitHubClient {
         this.token = token == null ? "" : token.trim();
     }
 
+    /** True only for https://github.com/... addresses: the token is never sent to any other host. */
+    public static boolean isGitHubUrl(String url) {
+        if (url == null) {
+            return false;
+        }
+        try {
+            URI u = URI.create(url.trim());
+            return "https".equalsIgnoreCase(u.getScheme()) && "github.com".equalsIgnoreCase(u.getHost())
+                    && u.getUserInfo() == null && (u.getPort() == -1 || u.getPort() == 443);
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
+
     /** Git credentials for https://github.com URLs. */
     public static CredentialsProvider credentials(String token) {
         return new UsernamePasswordCredentialsProvider("x-access-token", token == null ? "" : token.trim());

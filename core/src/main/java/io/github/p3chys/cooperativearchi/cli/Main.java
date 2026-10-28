@@ -127,9 +127,10 @@ public final class Main {
         return SharedModel.open(file);
     }
 
-    private static SyncOptions options(List<String> args) {
+    private static SyncOptions options(List<String> args) throws Exception {
         String token = env("COOPARCHI_TOKEN", env("GITHUB_TOKEN", null));
-        CredentialsProvider creds = token == null ? null : GitHubClient.credentials(token);
+        String remote = args.get(0).equals("clone") ? args.get(1) : remoteOf(Path.of(args.get(1)));
+        CredentialsProvider creds = token == null || !GitHubClient.isGitHubUrl(remote) ? null : GitHubClient.credentials(token);
         PersonIdent author = new PersonIdent(env("COOPARCHI_NAME", System.getProperty("user.name")),
                 env("COOPARCHI_EMAIL", System.getProperty("user.name") + "@localhost"));
         Side side = args.contains("--theirs") ? Side.THEIRS : args.contains("--mine") ? Side.MINE : null;
@@ -143,6 +144,14 @@ public final class Main {
         int mi = args.indexOf("-m");
         String message = mi >= 0 && mi + 1 < args.size() ? args.get(mi + 1) : null;
         return SyncOptions.of(creds, author, resolver).withMessage(message);
+    }
+
+    private static String remoteOf(Path ws) {
+        try (SharedModel m = open(ws)) {
+            return m.remoteUrl();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static String env(String name, String fallback) {

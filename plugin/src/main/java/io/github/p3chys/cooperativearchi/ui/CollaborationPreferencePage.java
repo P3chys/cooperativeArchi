@@ -93,7 +93,7 @@ public class CollaborationPreferencePage extends PreferencePage implements IWork
         hint.setText("only models without unsaved changes");
 
         askMessage = new Button(c, SWT.CHECK);
-        askMessage.setText("Ask for a short description of my changes when I press Sync");
+        askMessage.setText("Ask for a short description of my changes when I push");
         GridDataFactory.fillDefaults().span(3, 1).applyTo(askMessage);
 
         load();

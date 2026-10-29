@@ -13,7 +13,7 @@ import io.github.p3chys.cooperativearchi.model.ModelNode;
 /** Short human readable description of the difference between two model versions, used as commit message. */
 public final class ChangeSummary {
 
-    private enum Category {
+    enum Category {
         ELEMENT("element"), RELATION("relationship"), VIEW("view"), FOLDER("folder"), MODEL("model setting");
 
         final String noun;
@@ -64,7 +64,7 @@ public final class ChangeSummary {
         return n.tag().equals("folder") || n.id().equals(g.rootId());
     }
 
-    private static Category category(ModelNode n, ModelGraph g) {
+    static Category category(ModelNode n, ModelGraph g) {
         if (n.id().equals(g.rootId()) || n.tag().equals("profile")) {
             return Category.MODEL;
         }

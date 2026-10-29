@@ -279,7 +279,7 @@ public class HistoryView extends ViewPart {
         }
         if (!MessageDialog.openConfirm(getSite().getShell(), "Restore version",
                 "Make the model look like version " + e.shortId() + " (" + WHEN.format(e.time()) + ")?\n\n"
-                        + "This is shared as a new change on Sync; history is kept, so it can be undone the same way.")) {
+                        + "This is uploaded as a new change on the next Push; history is kept, so it can be undone the same way.")) {
             return;
         }
         try (SharedModel sm = SharedModel.open(model.getFile().toPath())) {

@@ -3,8 +3,12 @@
 <plugin>
    <extension point="org.eclipse.ui.commands">
       <category id="io.github.p3chys.cooperativearchi.category" name="Collaboration"/>
+      <command id="io.github.p3chys.cooperativearchi.pull" categoryId="io.github.p3chys.cooperativearchi.category"
+            name="Pull" description="Review and bring your colleagues' changes from GitHub into your model"/>
+      <command id="io.github.p3chys.cooperativearchi.push" categoryId="io.github.p3chys.cooperativearchi.category"
+            name="Push" description="Review and upload your saved changes to GitHub"/>
       <command id="io.github.p3chys.cooperativearchi.sync" categoryId="io.github.p3chys.cooperativearchi.category"
-            name="Sync" description="Upload your saved changes and receive your colleagues' changes"/>
+            name="Sync" description="Pull, then push"/>
       <command id="io.github.p3chys.cooperativearchi.syncAll" categoryId="io.github.p3chys.cooperativearchi.category"
             name="Sync All Shared Models"/>
       <command id="io.github.p3chys.cooperativearchi.share" categoryId="io.github.p3chys.cooperativearchi.category"
@@ -22,6 +26,8 @@
    </extension>
 
    <extension point="org.eclipse.ui.handlers">
+      <handler commandId="io.github.p3chys.cooperativearchi.pull" class="io.github.p3chys.cooperativearchi.ui.Handlers$Pull"/>
+      <handler commandId="io.github.p3chys.cooperativearchi.push" class="io.github.p3chys.cooperativearchi.ui.Handlers$Push"/>
       <handler commandId="io.github.p3chys.cooperativearchi.sync" class="io.github.p3chys.cooperativearchi.ui.Handlers$Sync"/>
       <handler commandId="io.github.p3chys.cooperativearchi.syncAll" class="io.github.p3chys.cooperativearchi.ui.Handlers$SyncAll"/>
       <handler commandId="io.github.p3chys.cooperativearchi.share" class="io.github.p3chys.cooperativearchi.ui.Handlers$Share"/>
@@ -40,7 +46,9 @@
    <extension point="org.eclipse.ui.menus">
       <menuContribution locationURI="menu:org.eclipse.ui.main.menu?after=tools">
          <menu id="io.github.p3chys.cooperativearchi.menu" label="&amp;Collaboration">
-            <command commandId="io.github.p3chys.cooperativearchi.sync" icon="icons/sync.png" label="&amp;Sync"/>
+            <command commandId="io.github.p3chys.cooperativearchi.pull" icon="icons/clone.png" label="P&amp;ull..."/>
+            <command commandId="io.github.p3chys.cooperativearchi.push" icon="icons/share.png" label="&amp;Push..."/>
+            <command commandId="io.github.p3chys.cooperativearchi.sync" icon="icons/sync.png" label="&amp;Sync (Pull, then Push)"/>
             <command commandId="io.github.p3chys.cooperativearchi.syncAll"/>
             <separator name="share" visible="true"/>
             <command commandId="io.github.p3chys.cooperativearchi.share" icon="icons/share.png"/>
@@ -55,8 +63,10 @@
       </menuContribution>
       <menuContribution locationURI="toolbar:org.eclipse.ui.main.toolbar?after=additions">
          <toolbar id="io.github.p3chys.cooperativearchi.toolbar" label="Collaboration">
-            <command commandId="io.github.p3chys.cooperativearchi.sync" icon="icons/sync.png"
-                  tooltip="Sync: upload your saved changes and receive colleagues' changes"/>
+            <command commandId="io.github.p3chys.cooperativearchi.pull" icon="icons/clone.png"
+                  tooltip="Pull: review colleagues' changes and bring them into your model"/>
+            <command commandId="io.github.p3chys.cooperativearchi.push" icon="icons/share.png"
+                  tooltip="Push: review your changes and upload them to GitHub"/>
             <command commandId="io.github.p3chys.cooperativearchi.history" icon="icons/history.png" tooltip="History"/>
          </toolbar>
       </menuContribution>
@@ -67,7 +77,8 @@
       </menuContribution>
       <menuContribution locationURI="popup:com.archimatetool.editor.treeModelView?after=additions">
          <separator name="io.github.p3chys.cooperativearchi.popup" visible="true"/>
-         <command commandId="io.github.p3chys.cooperativearchi.sync" icon="icons/sync.png"/>
+         <command commandId="io.github.p3chys.cooperativearchi.pull" icon="icons/clone.png"/>
+         <command commandId="io.github.p3chys.cooperativearchi.push" icon="icons/share.png"/>
          <command commandId="io.github.p3chys.cooperativearchi.share" icon="icons/share.png"/>
       </menuContribution>
    </extension>

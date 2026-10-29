@@ -22,6 +22,22 @@ public final class Handlers {
         }
     }
 
+    public static class Pull extends AbstractHandler {
+        @Override
+        public Object execute(ExecutionEvent event) {
+            SyncRunner.pull(ModelSupport.activeModel(event));
+            return null;
+        }
+    }
+
+    public static class Push extends AbstractHandler {
+        @Override
+        public Object execute(ExecutionEvent event) {
+            SyncRunner.push(ModelSupport.activeModel(event));
+            return null;
+        }
+    }
+
     public static class SyncAll extends AbstractHandler {
         @Override
         public Object execute(ExecutionEvent event) {

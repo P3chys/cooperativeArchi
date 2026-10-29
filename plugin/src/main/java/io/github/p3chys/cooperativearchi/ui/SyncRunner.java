@@ -22,14 +22,20 @@ import com.archimatetool.editor.model.IArchiveManager;
 import com.archimatetool.editor.model.IEditorModelManager;
 import com.archimatetool.model.IArchimateModel;
 
+import io.github.p3chys.cooperativearchi.git.ChangeReviewer;
 import io.github.p3chys.cooperativearchi.git.ConflictResolver;
+import io.github.p3chys.cooperativearchi.git.PullFirstException;
 import io.github.p3chys.cooperativearchi.git.SharedModel;
 import io.github.p3chys.cooperativearchi.git.SyncCancelledException;
 import io.github.p3chys.cooperativearchi.git.SyncOptions;
 import io.github.p3chys.cooperativearchi.git.SyncResult;
 import io.github.p3chys.cooperativearchi.github.GitHubClient;
 
-/** Runs syncs from the UI: save, sync with progress, resolve conflicts, reload, report. */
+/**
+ * Runs pulls, pushes and syncs from the UI: save, run with progress, resolve conflicts, review the changes, reload,
+ * report. Pull and push (and Sync = pull then push) show their changes before applying / uploading them; automatic
+ * syncs do not.
+ */
 final class SyncRunner {
 
     enum Mode {
@@ -39,8 +45,27 @@ final class SyncRunner {
         AUTO
     }
 
-    /** Outcome: the model instance to continue with (reloaded models are new instances), or null. */
-    record Outcome(IArchimateModel model, boolean ok) {
+    /** What runs: names for the progress dialog and the report. */
+    enum Action {
+        SYNC("Synchronizing", "Synced"), PULL("Pulling", "Pulled"), PUSH("Pushing", "Pushed");
+
+        final String running;
+        final String done;
+
+        Action(String running, String done) {
+            this.running = running;
+            this.done = done;
+        }
+    }
+
+    /**
+     * Outcome: the model instance to continue with (reloaded models are new instances), or null. {@code pullFirst}:
+     * a push found colleagues' changes on GitHub that must be pulled first.
+     */
+    record Outcome(IArchimateModel model, boolean ok, boolean pullFirst) {
+        Outcome(IArchimateModel model, boolean ok) {
+            this(model, ok, false);
+        }
     }
 
     @FunctionalInterface
@@ -58,11 +83,33 @@ final class SyncRunner {
     private SyncRunner() {
     }
 
+    /** Interactive: pull, then push, each with its review. Automatic, or merging a branch: one sync without review. */
     static Outcome sync(IArchimateModel model, Mode mode, String mergeFrom) {
-        return run(model, mode, (sm, o) -> sm.sync(mergeFrom == null ? o : o.withMergeFrom(mergeFrom)));
+        if (mode == Mode.INTERACTIVE && mergeFrom == null) {
+            Outcome pulled = pull(model);
+            return pulled.ok() ? push(pulled.model()) : pulled;
+        }
+        return run(model, mode, Action.SYNC, (sm, o) -> sm.sync(mergeFrom == null ? o : o.withMergeFrom(mergeFrom)));
     }
 
-    static Outcome run(IArchimateModel model, Mode mode, Work work) {
+    /** Brings colleagues' changes into the model after showing what they change in it. */
+    static Outcome pull(IArchimateModel model) {
+        return run(model, Mode.INTERACTIVE, Action.PULL, SharedModel::pull);
+    }
+
+    /** Uploads the model after showing what it changes on GitHub; offers to pull first when GitHub is ahead. */
+    static Outcome push(IArchimateModel model) {
+        Outcome pushed = run(model, Mode.INTERACTIVE, Action.PUSH, SharedModel::push);
+        if (!pushed.pullFirst() || !MessageDialog.openQuestion(ModelSupport.shell(), "Push", "Colleagues uploaded changes "
+                + "that your model does not have yet, so it cannot be pushed.\n\nPull them now (you will see what changes "
+                + "in your model), then push?")) {
+            return pushed;
+        }
+        Outcome pulled = pull(pushed.model());
+        return pulled.ok() ? run(pulled.model(), Mode.INTERACTIVE, Action.PUSH, SharedModel::push) : pulled;
+    }
+
+    static Outcome run(IArchimateModel model, Mode mode, Action action, Work work) {
         boolean interactive = mode == Mode.INTERACTIVE;
         if (model == null) {
             if (interactive) {
@@ -95,12 +142,15 @@ final class SyncRunner {
         try (SharedModel sm = SharedModel.open(file)) {
             CredentialsProvider creds = credentials(sm.remoteUrl(), interactive);
             options = SyncOptions.of(creds, Prefs.author(), resolver());
+            if (interactive) {
+                options = options.withReviewer(reviewer(model.getName()));
+            }
         } catch (IOException e) {
             return fail(model, mode, e.getMessage());
         } catch (IllegalStateException e) {
             return new Outcome(model, false);
         }
-        if (interactive && Prefs.flag(Prefs.ASK_MESSAGE, false)) {
+        if (interactive && action != Action.PULL && Prefs.flag(Prefs.ASK_MESSAGE, false)) {
             InputDialog d = new InputDialog(ModelSupport.shell(), "Sync", "Describe your changes (optional):", "", null);
             if (d.open() != Window.OK) {
                 return new Outcome(model, false);
@@ -122,7 +172,7 @@ final class SyncRunner {
         SyncOptions finalOptions = options;
         SyncResult[] result = new SyncResult[1];
         Exception[] error = new Exception[1];
-        String title = "Synchronizing '" + model.getName() + "'";
+        String title = action.running + " '" + model.getName() + "'";
         if (interactive) {
             try {
                 new ProgressMonitorDialog(ModelSupport.shell()).run(true, false, monitor -> {
@@ -138,7 +188,7 @@ final class SyncRunner {
             } catch (InvocationTargetException | InterruptedException e) {
                 error[0] = e;
             }
-            return finish(model, file, mode, result[0], error[0]);
+            return finish(model, file, mode, action, result[0], error[0]);
         }
         Job job = Job.create(title, monitor -> {
             try (SharedModel sm = SharedModel.open(file)) {
@@ -146,7 +196,7 @@ final class SyncRunner {
             } catch (Exception e) {
                 error[0] = e;
             }
-            Display.getDefault().asyncExec(() -> finish(model, file, mode, result[0], error[0]));
+            Display.getDefault().asyncExec(() -> finish(model, file, mode, action, result[0], error[0]));
             return Status.OK_STATUS;
         });
         job.setSystem(true);
@@ -154,8 +204,9 @@ final class SyncRunner {
         return new Outcome(model, true);
     }
 
-    private static Outcome finish(IArchimateModel model, Path file, Mode mode, SyncResult res, Exception error) {
-        Outcome outcome = report(model, file, mode, res, error);
+    private static Outcome finish(IArchimateModel model, Path file, Mode mode, Action action, SyncResult res,
+            Exception error) {
+        Outcome outcome = report(model, file, mode, action, res, error);
         BUSY.remove(file);
         if (PENDING.remove(file)) {
             for (IArchimateModel m : ModelSupport.sharedModels()) {
@@ -172,14 +223,18 @@ final class SyncRunner {
         return BUSY.contains(file);
     }
 
-    private static Outcome report(IArchimateModel model, Path file, Mode mode, SyncResult res, Exception error) {
+    private static Outcome report(IArchimateModel model, Path file, Mode mode, Action action, SyncResult res,
+            Exception error) {
         try {
-            if (error instanceof SyncCancelledException) {
-                ModelSupport.notify("Sync cancelled", "Nothing was changed.");
+            Throwable cause = error instanceof InvocationTargetException ite ? ite.getCause() : error;
+            if (cause instanceof SyncCancelledException) {
+                ModelSupport.notify("Cancelled", "Nothing was applied to your model or uploaded.");
                 return new Outcome(model, false);
             }
+            if (cause instanceof PullFirstException && mode == Mode.INTERACTIVE) {
+                return new Outcome(model, false, true);
+            }
             if (error != null) {
-                Throwable cause = error instanceof InvocationTargetException ite ? ite.getCause() : error;
                 if (!(cause instanceof IOException)) {
                     Activator.log("Sync failed", cause);
                 }
@@ -197,22 +252,22 @@ final class SyncRunner {
                     if (applied) {
                         current = update(model, file);
                     } else {
-                        extra = "\nYou saved during the sync: Sync again to load colleagues' changes.";
+                        extra = "\nYou saved meanwhile: Pull again to load colleagues' changes.";
                     }
                 } else {
-                    extra = "\nColleagues' changes will appear after you save and Sync again.";
+                    extra = "\nColleagues' changes will appear after you save and Pull again.";
                 }
             }
             if (mode == Mode.AUTO && AutoSync.isLive()) {
                 // live mode stays quiet: the status bar shows the state, the popup is for things that need attention
                 LiveStatus.synced(res.received(), res.offlineReason());
                 if (!res.notes().isEmpty()) {
-                    ModelSupport.notify("Synced '" + current.getName() + "'", "• " + String.join("\n• ", res.notes()));
+                    ModelSupport.notify(action.done + " '" + current.getName() + "'", "• " + String.join("\n• ", res.notes()));
                 }
             } else if (mode == Mode.INTERACTIVE || !res.nothingHappened()) {
                 StringBuilder text = new StringBuilder(res.describe()).append(extra);
                 res.notes().forEach(n -> text.append("\n• ").append(n));
-                ModelSupport.notify("Synced '" + current.getName() + "'", text.toString());
+                ModelSupport.notify(action.done + " '" + current.getName() + "'", text.toString());
             }
             fireChanged();
             return new Outcome(current, true);
@@ -302,6 +357,15 @@ final class SyncRunner {
             throw new IllegalStateException("No token");
         }
         return GitHubClient.credentials(token);
+    }
+
+    /** Shows the changes of a pull / push and asks to go ahead (called from the worker thread). */
+    private static ChangeReviewer reviewer(String modelName) {
+        return (diff, direction) -> {
+            boolean[] ok = new boolean[1];
+            Display.getDefault().syncExec(() -> ok[0] = new DiffDialog(ModelSupport.shell(), diff, direction, modelName).open() == Window.OK);
+            return ok[0];
+        };
     }
 
     private static ConflictResolver resolver() {

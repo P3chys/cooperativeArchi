@@ -67,7 +67,7 @@ final class CloneDialog extends TitleAreaDialog {
         }
         ModelSupport.open(SharedModel.modelFileIn(workspace));
         SyncRunner.fireChanged();
-        ModelSupport.notify("Shared model opened", "Edit, save, then press Sync to exchange changes with your colleagues.");
+        ModelSupport.notify("Shared model opened", "Press Pull to get your colleagues' changes and Push to upload yours (save first).");
     }
 
     /** Accepts "owner/repo", a GitHub page URL or a clone URL. */

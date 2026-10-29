@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -56,7 +57,9 @@ import org.eclipse.jgit.transport.RemoteRefUpdate;
 import org.eclipse.jgit.transport.URIish;
 import org.eclipse.jgit.treewalk.TreeWalk;
 
+import io.github.p3chys.cooperativearchi.git.ChangeReviewer.Direction;
 import io.github.p3chys.cooperativearchi.merge.ChangeSummary;
+import io.github.p3chys.cooperativearchi.merge.ModelDiff;
 import io.github.p3chys.cooperativearchi.merge.ModelMerger;
 import io.github.p3chys.cooperativearchi.merge.ModelMerger.MergeSession;
 import io.github.p3chys.cooperativearchi.model.ModelGraph;
@@ -67,8 +70,9 @@ import io.github.p3chys.cooperativearchi.model.SplitLayout;
  *
  * <p>Layout on disk: {@code <workspace>/<name>.archimate} is the file Archi opens;
  * {@code <workspace>/.coarchi} is a bare git repository holding the history in the split format
- * ({@link SplitLayout}). The analyst never sees git: {@link #sync} commits the saved model, merges colleagues'
- * work object by object and uploads the result.
+ * ({@link SplitLayout}). The analyst never sees git: {@link #pull} merges colleagues' work object by object into the
+ * saved model and {@link #push} uploads it, each showing its changes to a {@link ChangeReviewer} first;
+ * {@link #sync} does both without review (automatic and live sync).
  *
  * <p>Safety: the config value {@code loaded} records which commit the model file on disk corresponds to.
  * Local edits are always committed on top of that commit, so the file is only overwritten when the
@@ -79,6 +83,8 @@ public final class SharedModel implements AutoCloseable {
     public static final String GIT_DIR = ".coarchi";
     public static final String REMOTE = "origin";
     public static final String DEFAULT_BRANCH = "main";
+    /** Where a model is looked for in a repository: both may exist, or only one of them. */
+    static final List<String> MAIN_BRANCHES = List.of(DEFAULT_BRANCH, "master");
     private static final String SECTION = "cooperativearchi";
     private static final int PUSH_ATTEMPTS = 5;
     private static final Map<Path, ReentrantLock> LOCKS = new ConcurrentHashMap<>();
@@ -146,14 +152,10 @@ public final class SharedModel implements AutoCloseable {
         SharedModel m = new SharedModel(modelFileIn(workspaceDir), r);
         try {
             FetchResult fetched = m.fetch(options);
-            List<String> branches = m.branches();
-            if (branches.isEmpty()) {
-                throw new IOException("The repository " + remoteUrl + " does not contain a model yet. Use 'Share model' instead.");
-            }
-            String branch = branches.contains(DEFAULT_BRANCH) ? DEFAULT_BRANCH : branches.get(0);
-            Ref head = fetched.getAdvertisedRef(Constants.HEAD);
-            if (head != null && head.isSymbolic() && head.getTarget().getName().startsWith(R_HEADS)) {
-                branch = head.getTarget().getName().substring(R_HEADS.length());
+            String branch = m.modelBranch(fetched.getAdvertisedRef(Constants.HEAD));
+            if (branch == null) {
+                throw new IOException("The repository " + remoteUrl + " does not contain a model yet (looked in "
+                        + String.join(" and ", MAIN_BRANCHES) + "). Use 'Share model' instead.");
             }
             ObjectId tip = r.resolve(R_REMOTES + REMOTE + "/" + branch);
             m.setRef(branch, tip);
@@ -165,6 +167,32 @@ public final class SharedModel implements AutoCloseable {
             deleteRecursively(workspaceDir);
             throw e;
         }
+    }
+
+    /**
+     * The downloaded branch that holds the model: main or master, whichever contains one (the server's default
+     * branch first if it is one of them), else the default branch or any other. Null if no branch has a model.
+     */
+    private String modelBranch(Ref advertisedHead) throws IOException {
+        String serverDefault = advertisedHead != null && advertisedHead.isSymbolic()
+                && advertisedHead.getTarget().getName().startsWith(R_HEADS)
+                        ? advertisedHead.getTarget().getName().substring(R_HEADS.length()) : null;
+        Set<String> candidates = new LinkedHashSet<>();
+        if (serverDefault != null && MAIN_BRANCHES.contains(serverDefault)) {
+            candidates.add(serverDefault);
+        }
+        candidates.addAll(MAIN_BRANCHES);
+        if (serverDefault != null) {
+            candidates.add(serverDefault);
+        }
+        candidates.addAll(branches());
+        for (String b : candidates) {
+            ObjectId tip = repo.resolve(R_REMOTES + REMOTE + "/" + b);
+            if (tip != null && hasModel(tip)) {
+                return b;
+            }
+        }
+        return null;
     }
 
     private static void prepareEmptyDir(Path dir) throws IOException {
@@ -286,40 +314,81 @@ public final class SharedModel implements AutoCloseable {
      * {@link SyncResult#needsReload()} and Archi has no unsaved changes.
      */
     public SyncResult sync(SyncOptions options) throws IOException, SyncCancelledException {
+        return locked(() -> doSync(options));
+    }
+
+    /**
+     * Brings colleagues' changes from GitHub into the saved model: commits the saved file locally (nothing is
+     * uploaded), merges the remote branch and shows what that changes in the local model to
+     * {@link SyncOptions#reviewer()}. Like {@link #sync}, does not touch the model file: call {@link #applySync}.
+     *
+     * @throws SyncCancelledException if a conflict or the review was cancelled; the model stays as it is
+     */
+    public SyncResult pull(SyncOptions options) throws IOException, SyncCancelledException {
+        return locked(() -> doPull(options));
+    }
+
+    /**
+     * Uploads the saved model: commits it and shows its changes against the model on GitHub to
+     * {@link SyncOptions#reviewer()} before pushing. Never merges colleagues' work into the model.
+     *
+     * @throws PullFirstException     if GitHub has changes the local model does not have yet
+     * @throws SyncCancelledException if the review was cancelled; nothing is uploaded
+     */
+    public SyncResult push(SyncOptions options) throws IOException, SyncCancelledException {
+        return locked(() -> doPush(options));
+    }
+
+    @FunctionalInterface
+    private interface Operation {
+        SyncResult run() throws IOException, SyncCancelledException;
+    }
+
+    private SyncResult locked(Operation op) throws IOException, SyncCancelledException {
         ReentrantLock lock = LOCKS.computeIfAbsent(modelFile, k -> new ReentrantLock());
         if (!lock.tryLock()) {
             throw new IOException("This model is already being synchronized");
         }
         try {
-            return doSync(options);
+            return op.run();
         } finally {
             lock.unlock();
         }
     }
 
-    private SyncResult doSync(SyncOptions o) throws IOException, SyncCancelledException {
-        SyncResult res = new SyncResult();
+    /**
+     * Commits the saved model file on top of the version it was loaded from if it changed (summary in
+     * {@link SyncResult#committed}). Returns the commit the file corresponds to now.
+     */
+    private ObjectId commitSaved(ObjectInserter ins, SyncOptions o, SyncResult res) throws IOException {
         byte[] bytes = Files.readAllBytes(modelFile);
         res.fileHashAtRead = sha256(bytes);
         Map<String, byte[]> files = SplitLayout.write(ModelGraph.read(bytes));
+        ObjectId localTree = writeTree(files, ins);
+        ObjectId loaded = loadedId();
+        if (loaded != null && treeOf(loaded).equals(localTree)) {
+            return loaded;
+        }
+        ModelGraph before = loaded == null ? null : graph(loaded);
+        ModelGraph saved = SplitLayout.read(files);
+        cacheGraph(localTree, saved);
+        String summary = loaded == null ? "First version of '" + saved.root().name() + "'"
+                : ChangeSummary.of(before, saved).toString();
+        String message = o.message() != null && !o.message().isBlank() ? o.message().trim()
+                : pendingMessage() != null ? pendingMessage() + "\n\n" + summary : summary;
+        ObjectId local = commit(ins, localTree, message, o.author(), loaded == null ? new ObjectId[0] : new ObjectId[] { loaded });
+        res.committed = summary;
+        setLoaded(local);
+        setPendingMessage(null);
+        return local;
+    }
 
+    private SyncResult doSync(SyncOptions o) throws IOException, SyncCancelledException {
+        SyncResult res = new SyncResult();
         try (ObjectInserter ins = repo.newObjectInserter()) {
-            ObjectId localTree = writeTree(files, ins);
             ObjectId loaded = loadedId();
-            ObjectId local = loaded;
-            if (loaded == null || !treeOf(loaded).equals(localTree)) {
-                ModelGraph before = loaded == null ? null : graph(loaded);
-                ModelGraph saved = SplitLayout.read(files);
-                cacheGraph(localTree, saved);
-                String summary = loaded == null ? "First version of '" + saved.root().name() + "'"
-                        : ChangeSummary.of(before, saved).toString();
-                String message = o.message() != null && !o.message().isBlank() ? o.message().trim()
-                        : pendingMessage() != null ? pendingMessage() + "\n\n" + summary : summary;
-                local = commit(ins, localTree, message, o.author(), loaded == null ? new ObjectId[0] : new ObjectId[] { loaded });
-                res.committed = summary;
-                setLoaded(local);
-                setPendingMessage(null);
-            }
+            ObjectId local = commitSaved(ins, o, res);
+            ObjectId localTree = treeOf(local);
 
             String branch = branch();
             ObjectId result = mergeCommits(ins, local, repo.resolve(R_HEADS + branch), "your earlier local version", o, res);
@@ -346,6 +415,7 @@ public final class SharedModel implements AutoCloseable {
                         res.offlineReason = e.getMessage();
                         break;
                     }
+                    branch = followMainBranch(branch, result);
                     ObjectId remote = repo.resolve(R_REMOTES + REMOTE + "/" + branch);
                     result = mergeCommits(ins, result, remote, "colleagues' changes", o, res);
                     setRef(branch, result);
@@ -371,6 +441,148 @@ public final class SharedModel implements AutoCloseable {
                 setLoaded(result);
             }
             return res;
+        }
+    }
+
+    private SyncResult doPull(SyncOptions o) throws IOException, SyncCancelledException {
+        requireRemote();
+        SyncResult res = new SyncResult();
+        try (ObjectInserter ins = repo.newObjectInserter()) {
+            boolean first = loadedId() == null;
+            ObjectId local = commitSaved(ins, o, res);
+            res.committed = null; // kept as a local version only: a pull uploads nothing
+            String branch = branch();
+            ObjectId result = mergeCommits(ins, local, repo.resolve(R_HEADS + branch), "your earlier local version", o, res);
+            setRef(branch, result);
+            if (first) {
+                pack();
+            }
+
+            fetch(o);
+            branch = followMainBranch(branch, result);
+            ObjectId remote = repo.resolve(R_REMOTES + REMOTE + "/" + branch);
+            ObjectId merged =mergeCommits(ins, result, remote, "colleagues' changes", o, res);
+            res.newHead = merged;
+            if (treeOf(merged).equals(treeOf(local))) {
+                setRef(branch, merged);
+                if (!merged.equals(local)) {
+                    setLoaded(merged);
+                }
+                return res;
+            }
+            ModelDiff diff = ModelDiff.of(graph(local), graph(merged));
+            if (!o.reviewer().review(diff, Direction.PULL)) {
+                throw new SyncCancelledException();
+            }
+            setRef(branch, merged);
+            res.diff = diff;
+            res.received = ChangeSummary.of(graph(local), graph(merged)).toString();
+            res.modelToLoad = snapshot(merged);
+            return res;
+        }
+    }
+
+    private SyncResult doPush(SyncOptions o) throws IOException, SyncCancelledException {
+        requireRemote();
+        SyncResult res = new SyncResult();
+        try (ObjectInserter ins = repo.newObjectInserter()) {
+            boolean first = loadedId() == null;
+            ObjectId local = commitSaved(ins, o, res);
+            res.committed = null; // set below once uploaded
+            String branch = branch();
+            ObjectId result = mergeCommits(ins, local, repo.resolve(R_HEADS + branch), "your earlier local version", o, res);
+            setRef(branch, result);
+            if (first) {
+                pack();
+            }
+            res.newHead = result;
+            if (!treeOf(result).equals(treeOf(local))) {
+                // an earlier sync merged more than the file shows yet (Archi had unsaved changes): load it too
+                res.modelToLoad = snapshot(result);
+            } else if (!result.equals(local)) {
+                setLoaded(result);
+            }
+
+            fetch(o);
+            branch = followMainBranch(branch, result);
+            ObjectId remote = repo.resolve(R_REMOTES + REMOTE + "/" + branch);
+            if (remote != null && !isAncestor(remote, result)) {
+                throw new PullFirstException();
+            }
+            if (result.equals(remote)) {
+                return res;
+            }
+            // a branch that is new on GitHub is compared with the model GitHub has on main / master
+            ObjectId github = remote != null ? remote : remoteMainBranch();
+            ModelGraph onGitHub = github == null ? null : graph(github);
+            ModelGraph uploaded = graph(result);
+            ModelDiff diff = ModelDiff.of(onGitHub, uploaded);
+            if (!o.reviewer().review(diff, Direction.PUSH)) {
+                throw new SyncCancelledException();
+            }
+            RemoteRefUpdate.Status status = push(branch, o);
+            if (status != RemoteRefUpdate.Status.OK && status != RemoteRefUpdate.Status.UP_TO_DATE) {
+                throw new PullFirstException(); // a colleague uploaded in the meantime
+            }
+            res.pushed = true;
+            res.diff = diff;
+            res.committed = onGitHub == null ? "First version of '" + uploaded.root().name() + "'"
+                    : ChangeSummary.of(onGitHub, uploaded).toString();
+            return res;
+        }
+    }
+
+    private void requireRemote() throws IOException {
+        if (remoteUrl() == null) {
+            throw new IOException("This model is not connected to a GitHub repository");
+        }
+    }
+
+    /**
+     * Main and master are the same place for a model: when the current branch is one of them and GitHub has no model
+     * on it but has one on the other, the workspace switches to that one (keeping the local work at
+     * {@code tip}), instead of uploading a second copy next to it. Returns the branch to use.
+     */
+    private String followMainBranch(String branch, ObjectId tip) throws IOException {
+        ObjectId current = repo.resolve(R_REMOTES + REMOTE + "/" + branch);
+        if (!MAIN_BRANCHES.contains(branch) || (current != null && hasModel(current))) {
+            return branch;
+        }
+        for (String other : MAIN_BRANCHES) {
+            ObjectId remote = repo.resolve(R_REMOTES + REMOTE + "/" + other);
+            if (!other.equals(branch) && remote != null && hasModel(remote)) {
+                setRef(other, tip);
+                setBranch(other);
+                RefUpdate old = repo.updateRef(R_HEADS + branch);
+                old.setForceUpdate(true);
+                old.delete();
+                return other;
+            }
+        }
+        return branch;
+    }
+
+    /** The downloaded main or master branch that holds a model, or null. */
+    private ObjectId remoteMainBranch() throws IOException {
+        for (String b : MAIN_BRANCHES) {
+            ObjectId tip = repo.resolve(R_REMOTES + REMOTE + "/" + b);
+            if (tip != null && hasModel(tip)) {
+                return tip;
+            }
+        }
+        return null;
+    }
+
+    private boolean hasModel(ObjectId commit) throws IOException {
+        try (RevWalk w = new RevWalk(repo);
+                TreeWalk tw = TreeWalk.forPath(repo, SplitLayout.ROOT_FILE, w.parseCommit(commit).getTree())) {
+            return tw != null;
+        }
+    }
+
+    private boolean isAncestor(ObjectId ancestor, ObjectId of) throws IOException {
+        try (RevWalk w = new RevWalk(repo)) {
+            return w.isMergedInto(w.parseCommit(ancestor), w.parseCommit(of));
         }
     }
 

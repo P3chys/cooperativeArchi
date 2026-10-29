@@ -3,7 +3,10 @@
 Lets several analysts work on the same [Archi](https://www.archimatetool.com) model at the same time, through GitHub,
 without merge conflicts in files. A lightweight alternative to coArchi.
 
-- **One button:** *Sync* saves your model, uploads your changes and brings in your colleagues' changes.
+- **Pull and push, with a review:** *Pull* shows exactly what your colleagues' changes will change in your model
+  before applying them; *Push* shows exactly what your changes will change in the model on GitHub before uploading.
+  Every added, deleted or changed element, relationship, view, folder and model setting is listed with each changed
+  name, documentation, property or reference (old → new). Pure layout (positions, sizes, bend points) is only counted.
 - **Merges per element and per property.** If Alice renames an element and Bob moves it in a view, both changes are kept.
   Only when two people change *the same property of the same thing* (e.g. both rename one element) does a dialog ask
   which version to keep.
@@ -12,7 +15,8 @@ without merge conflicts in files. A lightweight alternative to coArchi.
 - **History** of who changed what, open or restore any older version.
 - **Branches** for proposals / what-if work, merged back with the same element-level merge.
 - **Optional auto-sync** on every save and/or every N minutes.
-- Works offline: Sync saves a local version and uploads it next time.
+- Opening a shared model finds it on `main` or `master`, whichever of the two holds it.
+- Works offline: automatic sync saves a local version and uploads it next time.
 
 Requires Archi 5.4+ (Windows and macOS use the same plugin file, see below).
 
@@ -32,7 +36,7 @@ Requires Archi 5.4+ (Windows and macOS use the same plugin file, see below).
 
    After upgrading Archi across that line, install the matching file again.
 2. In Archi: **Help > Manage Plug-ins... > Install New...**, choose the file, restart Archi.
-   A **Collaboration** menu and a Sync button appear.
+   A **Collaboration** menu and Pull / Push buttons appear.
 
 ### Connect to GitHub (once)
 
@@ -47,13 +51,16 @@ will create new shared models), paste it, *Verify and save*. The token is stored
 |--------------------------------------|---------|
 | Start sharing a model                | Select it in the Models tree, **Collaboration > Share Model on GitHub...** |
 | Open a model a colleague shared      | **Collaboration > Open Shared Model from GitHub...**, paste `owner/repo` |
-| Exchange changes                     | Press **Sync** (toolbar, Collaboration menu or `Ctrl+Alt+Y`) - as often as you like |
+| Get colleagues' changes              | Press **Pull** (toolbar or Collaboration menu), review, *Apply to my model* |
+| Upload your changes                  | Press **Push**, review, *Push to GitHub* (if colleagues pushed first, it offers to Pull before) |
+| Both in one go                       | **Collaboration > Sync** (`Ctrl+Alt+Y`): Pull, then Push, each with its review |
 | See who changed what                 | **Collaboration > History** (double-click = open that version as a copy) |
 | Undo to an older version             | History > right-click > *Restore this version...* |
 | Work on a proposal separately        | **Collaboration > Branches... > New branch**; later *Merge into current* |
 
 Shared models are kept in `Documents/Archi/cooperativeArchi/<model>/` (configurable in
-*Preferences > Collaboration*). Sync often: small, frequent syncs mean fewer conflicts.
+*Preferences > Collaboration*). Pull and push often: small, frequent exchanges mean fewer conflicts. In the review
+dialog, *Copy as text* copies the whole list of changes.
 
 ### Live collaboration
 
@@ -66,7 +73,8 @@ keeps being saved locally, and it goes up as soon as the connection is back. Wit
 usually reaches colleagues in 4–9 seconds. No server is needed besides GitHub.
 
 **Conflicts:** the dialog lists only the things both of you changed differently. Click the version to keep in each row
-(*Keep all mine / Keep all theirs* for bulk), then *Apply and sync*. *Cancel* changes nothing.
+(*Keep all mine / Keep all theirs* for bulk), then *Apply*; the review of the merged result follows. *Cancel* changes
+nothing.
 
 ---
 
@@ -82,10 +90,12 @@ The repository on GitHub stores the model split into one small XML file per elem
 as directories) so history and diffs are readable on GitHub, plus a complete `model.archimate` snapshot that anyone can
 download and open in Archi without the plugin.
 
-Sync = commit the saved file on top of the version you last loaded, then a 3-way merge of *objects* (not text lines)
-with the local branch and with GitHub, then upload. The model file is only overwritten when Archi has no unsaved
+Pull = commit the saved file locally on top of the version you last loaded, then a 3-way merge of *objects* (not text
+lines) with GitHub's version; the review compares your model with the merged result. Push = commit the saved file and
+upload it, after a review against GitHub's version; it never merges, so it asks you to pull first when GitHub has
+changes you don't have. Automatic and live sync do both without review. The model file is only overwritten when Archi has no unsaved
 changes and the file did not change during the sync, so nothing you typed can be lost; anything not loaded yet is
-merged on the next Sync. The open model is then updated in place: only the objects that changed are touched, matched by
+merged on the next Pull. The open model is then updated in place: only the objects that changed are touched, matched by
 id, outside Archi's undo stack. A check confirms the result equals the merged file; if it doesn't, the model is
 closed and reopened instead.
 
@@ -107,7 +117,7 @@ just test        # core unit + two-analyst sync tests; also opens merged models 
 just plugin      # build/dist/cooperativeArchi-<version>.archiplugin
 just install     # copy the plugin into your Archi dropins folder (close Archi first, then start it again)
 just second-archi [name]       # Windows: a second Archi as another analyst, to try live collaboration on one machine
-just cli sync <workspaceDir>   # command line client (also: share, clone, log, branch, switch, merge)
+just cli pull <workspaceDir>   # command line client; pull/push print the change list (also: sync, share, clone, log, branch, switch, merge)
 ```
 
 **Windows: don't use PowerShell 7 from the Microsoft Store for `just install` / `just second-archi`, or to start Archi.**

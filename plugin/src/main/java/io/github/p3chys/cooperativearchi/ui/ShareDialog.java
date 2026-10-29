@@ -51,7 +51,7 @@ final class ShareDialog extends TitleAreaDialog {
             return;
         }
         if (ModelSupport.isShared(model)) {
-            MessageDialog.openInformation(shell, "Share Model", "'" + model.getName() + "' is already shared. Use Sync.");
+            MessageDialog.openInformation(shell, "Share Model", "'" + model.getName() + "' is already shared. Use Pull and Push.");
             return;
         }
         try {

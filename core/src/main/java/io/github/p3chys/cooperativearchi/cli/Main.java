@@ -7,6 +7,7 @@ import java.util.List;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.transport.CredentialsProvider;
 
+import io.github.p3chys.cooperativearchi.git.ChangeReviewer.Direction;
 import io.github.p3chys.cooperativearchi.git.ConflictResolver;
 import io.github.p3chys.cooperativearchi.git.HistoryEntry;
 import io.github.p3chys.cooperativearchi.git.SharedModel;
@@ -27,7 +28,9 @@ public final class Main {
               share  <model.archimate> <workspaceDir> [remoteUrl]   start sharing a model (then run sync)
               share  <model.archimate> <workspaceDir> --github <repoName> [--public]   ...in a new GitHub repository
               clone  <remoteUrl> <workspaceDir>                     download a shared model
-              sync   <workspaceDir> [--mine|--theirs] [-m message]  commit, merge, upload
+              pull   <workspaceDir> [--mine|--theirs]               merge colleagues' changes into the model (lists them)
+              push   <workspaceDir> [-m message]                    upload the model (lists changes against GitHub)
+              sync   <workspaceDir> [--mine|--theirs] [-m message]  pull and push in one step
               log    <workspaceDir> [count]                         show history
               branch <workspaceDir> [newBranch]                     list or create branches
               switch <workspaceDir> <branch>                        switch branch (sync first)
@@ -70,6 +73,21 @@ public final class Main {
             case "clone" -> {
                 try (SharedModel m = SharedModel.cloneFrom(args.get(1), ws, options(args))) {
                     System.out.println("Downloaded " + m.modelFile() + " (branch " + m.branch() + ")");
+                }
+            }
+            case "pull", "push" -> {
+                try (SharedModel m = open(ws)) {
+                    SyncOptions o = options(args).withReviewer((diff, direction) -> {
+                        System.out.println(direction == Direction.PULL ? "Changes to your model:" : "Changes to the model on GitHub:");
+                        diff.toText().lines().forEach(l -> System.out.println("  " + l));
+                        return true;
+                    });
+                    SyncResult r = cmd.equals("pull") ? m.pull(o) : m.push(o);
+                    if (r.needsReload() && !m.applySync(r)) {
+                        System.out.println("Model file changed meanwhile; run pull again");
+                    }
+                    System.out.println(r.describe());
+                    r.notes().forEach(n -> System.out.println("  note: " + n));
                 }
             }
             case "sync", "merge" -> {

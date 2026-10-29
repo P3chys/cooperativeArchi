@@ -5,7 +5,9 @@ import java.util.List;
 
 import org.eclipse.jgit.lib.ObjectId;
 
-/** Outcome of {@link SharedModel#sync}. */
+import io.github.p3chys.cooperativearchi.merge.ModelDiff;
+
+/** Outcome of {@link SharedModel#sync}, {@link SharedModel#pull} and {@link SharedModel#push}. */
 public final class SyncResult {
 
     /** Local edits were committed (summary of what changed). */
@@ -17,6 +19,8 @@ public final class SyncResult {
     String offlineReason;
     int conflictsResolved;
     final List<String> notes = new ArrayList<>();
+    /** Pull: what changes in the local model; push: what changed on GitHub. Null for sync or when up to date. */
+    ModelDiff diff;
 
     ObjectId newHead;
     /** Model content to load into Archi, or null when the file on disk is already up to date. */
@@ -45,6 +49,10 @@ public final class SyncResult {
 
     public List<String> notes() {
         return notes;
+    }
+
+    public ModelDiff diff() {
+        return diff;
     }
 
     public ObjectId newHead() {

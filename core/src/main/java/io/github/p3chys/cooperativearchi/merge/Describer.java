@@ -14,6 +14,15 @@ public final class Describer {
     }
 
     public static String describe(ModelNode n, ModelGraph g) {
+        return describe(n, g, true);
+    }
+
+    /** Like {@link #describe} but without the "in view '...'" suffix, for objects listed under their view. */
+    public static String describeInView(ModelNode n, ModelGraph g) {
+        return describe(n, g, false);
+    }
+
+    private static String describe(ModelNode n, ModelGraph g, boolean withView) {
         if (n == null) {
             return "(unknown)";
         }
@@ -31,10 +40,14 @@ public final class Describer {
             return "View '" + nvl(n.name()) + "'";
         }
         ModelNode view = g.enclosingView(n.id());
-        String in = view == null ? "" : " in view '" + nvl(view.name()) + "'";
+        String in = view == null || !withView ? "" : " in view '" + nvl(view.name()) + "'";
         String element = n.attrs().get("archimateElement");
         if (element != null) {
             return "'" + nameOf(element, g) + "'" + in;
+        }
+        String referenced = n.attrs().get("model");
+        if (referenced != null && type.equals("DiagramModelReference")) {
+            return "Reference to view '" + nameOf(referenced, g) + "'" + in;
         }
         String relation = n.attrs().get("archimateRelationship");
         if (relation != null) {
@@ -60,6 +73,11 @@ public final class Describer {
         }
         String label = nameOf(rel.attrs().get("source"), g) + " → " + nameOf(rel.attrs().get("target"), g);
         return rel.name() == null || rel.name().isEmpty() ? "'" + label + "'" : "'" + rel.name() + "' (" + label + ")";
+    }
+
+    /** Display name of the object with this id (of the element, for a diagram object), "?" if unknown. */
+    public static String name(String id, ModelGraph g) {
+        return nameOf(id, g);
     }
 
     private static String nameOf(String id, ModelGraph g) {
@@ -96,6 +114,11 @@ public final class Describer {
             case "source" -> "Source";
             case "target" -> "Target";
             case "parent" -> "Location";
+            case "xsi:type" -> "Type";
+            case "archimateElement" -> "Element";
+            case "archimateRelationship" -> "Relationship";
+            case "model" -> "Referenced view";
+            case "profiles" -> "Specialization";
             case "fillColor" -> "Fill colour";
             case "lineColor" -> "Line colour";
             case "fontColor" -> "Font colour";

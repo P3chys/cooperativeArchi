@@ -9,11 +9,20 @@ val qualifier = providers.gradleProperty("qualifier").getOrElse("v" + LocalDateT
     .format(DateTimeFormatter.ofPattern("yyyyMMddHHmm")))
 val bundleVersion = "${project.version}.$qualifier"
 val archiTarget = rootProject.extra["archiTarget"] as String
+val javaRelease = rootProject.extra["javaRelease"] as String
 val manifestValues = mapOf(
     "version" to bundleVersion,
-    "javaRelease" to rootProject.extra["javaRelease"] as String,
+    "javaRelease" to javaRelease,
     "jgitRange" to rootProject.extra["jgitRange"] as String,
 )
+// Archi 4.9 has no JGit bundle and runs on Java 11: the plugin brings JGit along (lib/) and its classes are
+// rewritten for Java 11 after compiling (JvmDowngrader, with the Java API pieces it needs copied into the jar)
+val embedJGit = archiTarget == "4.9"
+
+// the Archi / Eclipse calls that differ between Archi lines (class Compat)
+sourceSets.main { java.srcDir(if (archiTarget == "4.9") "src/archi4/java" else "src/archi5/java") }
+
+val embedded = configurations.create("embedded")
 
 val archiPlugins = fileTree(archiHome) {
     include("plugins/*.jar", "plugins/*/*.jar", "Contents/Eclipse/plugins/*.jar", "Contents/Eclipse/plugins/*/*.jar")
@@ -35,6 +44,10 @@ dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter")
     testImplementation("org.assertj:assertj-core:3.27.6")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    if (embedJGit) {
+        embedded("org.eclipse.jgit:org.eclipse.jgit:${rootProject.extra["jgitVersion"]}")
+        embedded("org.slf4j:slf4j-nop:2.0.17") // quiet JGit logging; Archi 4.9 has no SLF4J
+    }
 }
 
 tasks.test {
@@ -52,11 +65,44 @@ tasks.jar {
         from("META-INF/MANIFEST.MF") {
             eachEntry {
                 value = manifestValues.entries.fold(value.toString()) { v, (k, x) -> v.replace("\${$k}", x) }
+                if (embedJGit && key == "Require-Bundle") {
+                    value = value.toString().replace(Regex("org\\.eclipse\\.jgit;[^,]*,"), "")
+                }
+                if (embedJGit && key == "Import-Package") {
+                    // packages of the Java runtime that the embedded JGit uses
+                    value = "$value,javax.crypto,javax.management,javax.net.ssl,org.xml.sax.helpers"
+                }
             }
         }
     }
     // the manifest's ${...} placeholders must be expanded; keep the jar reproducible otherwise
     inputs.properties(manifestValues)
+    if (embedJGit) {
+        val libs = embedded.incoming.files
+        inputs.files(libs)
+        doFirst {
+            manifest.attributes("Bundle-ClassPath" to (listOf(".") + libs.map { "lib/${it.name}" }).joinToString(","))
+        }
+    }
+}
+
+// The plugin jar as installed: on Archi 4.9 rewritten for Java 11, with JGit inside.
+val bundle: TaskProvider<out AbstractArchiveTask> = if (!embedJGit) tasks.jar else {
+    apply(plugin = "xyz.wagyourtail.jvmdowngrader")
+    configure<xyz.wagyourtail.jvmdg.gradle.JVMDowngraderExtension> {
+        downgradeTo.set(JavaVersion.toVersion(javaRelease))
+        logLevel.set("WARN")
+    }
+    tasks.named<xyz.wagyourtail.jvmdg.gradle.task.ShadeJar>("shadeDowngradedApi") {
+        shadePath.set("io/github/p3chys/cooperativearchi/jvmdg/")
+    }
+    tasks.register<Zip>("bundleJar") {
+        val shaded = tasks.named<xyz.wagyourtail.jvmdg.gradle.task.ShadeJar>("shadeDowngradedApi")
+        archiveFileName.set(tasks.jar.flatMap { it.archiveFileName })
+        destinationDirectory.set(layout.buildDirectory.dir("bundle"))
+        from(shaded.map { zipTree(it.archiveFile) })
+        from(embedded) { into("lib") }
+    }
 }
 
 // The format Archi's "Manage Plug-ins > Install" understands: a zip with an "archi-plugin" marker entry.
@@ -65,7 +111,7 @@ val archiplugin = tasks.register<Zip>("archiplugin") {
     description = "Builds the installable cooperativeArchi .archiplugin file"
     archiveFileName.set("cooperativeArchi-${project.version}-archi$archiTarget.archiplugin")
     destinationDirectory.set(rootProject.layout.buildDirectory.dir("dist"))
-    from(tasks.jar)
+    from(bundle)
     from("archi-plugin") // empty marker entry
 }
 
@@ -77,8 +123,9 @@ tasks.register<Copy>("installDev") {
     description = "Installs the plugin into the local Archi dropins folder"
     val os = System.getProperty("os.name").lowercase()
     val home = System.getProperty("user.home")
-    val dropins = if (os.contains("mac")) "$home/Library/Application Support/Archi/dropins"
-        else if (os.contains("win")) "$home/AppData/Roaming/Archi/dropins" else "$home/.archi/dropins"
+    val data = if (archiTarget == "4.9") "Archi4" else "Archi" // Archi 4 keeps its settings apart from Archi 5
+    val dropins = if (os.contains("mac")) "$home/Library/Application Support/$data/dropins"
+        else if (os.contains("win")) "$home/AppData/Roaming/$data/dropins" else "$home/.${data.lowercase()}/dropins"
     doFirst {
         // Archi picks up a changed dropins folder only at start, and clears its configuration on a normal exit
         val running = ProcessHandle.allProcesses().anyMatch { p ->
@@ -111,6 +158,6 @@ tasks.register<Copy>("installDev") {
                     .forEach { it.delete() }
             }
     }
-    from(tasks.jar)
+    from(bundle)
     into(dropins)
 }

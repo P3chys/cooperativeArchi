@@ -518,7 +518,8 @@ public final class ModelMerger {
         return -1;
     }
 
-    static int compareVersions(String a, String b) {
+    /** Compares Archi model versions ("4.9.0" &lt; "5.0.0"); null is the lowest. */
+    public static int compareVersions(String a, String b) {
         String[] x = a == null ? new String[0] : a.split("\\.");
         String[] y = b == null ? new String[0] : b.split("\\.");
         for (int i = 0; i < Math.max(x.length, y.length); i++) {

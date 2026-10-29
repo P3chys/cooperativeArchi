@@ -8,7 +8,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        archiTarget: ["5.4", "5.10"]
+        archiTarget: ["4.9", "5.4", "5.10"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5

@@ -12,18 +12,19 @@ default:
 test *args:
     {{gw}} :core:test {{args}}
 
-# build the installable .archiplugin into build/dist (target: Archi line, 5.4 or 5.10)
+# build the installable .archiplugin into build/dist (target: Archi line, 4.9, 5.4 or 5.10)
 plugin target="5.10":
     {{gw}} :plugin:archiplugin "-ParchiTarget={{target}}"
 
 # build the .archiplugin for every supported Archi line (release files)
 dist:
+    {{gw}} :plugin:archiplugin "-ParchiTarget=4.9"
     {{gw}} :plugin:archiplugin "-ParchiTarget=5.4"
     {{gw}} :plugin:archiplugin "-ParchiTarget=5.10"
 
-# install the plugin into the local Archi dropins folder (restart Archi afterwards)
-install:
-    {{gw}} :plugin:installDev
+# install the plugin into the local Archi dropins folder (restart Archi afterwards; target 4.9 for an Archi 4.9)
+install target="5.10":
+    {{gw}} :plugin:installDev "-ParchiTarget={{target}}"
 
 # start a second Archi as another analyst (own settings and model folder, live mode on) to try collaboration on one machine
 [windows]
@@ -38,5 +39,6 @@ cli *args:
 
 # everything: tests + plugin + cli, for every supported Archi line
 check:
+    {{gw}} build :core:cliJar "-ParchiTarget=4.9"
     {{gw}} build :core:cliJar "-ParchiTarget=5.4"
     {{gw}} build :core:cliJar "-ParchiTarget=5.10"

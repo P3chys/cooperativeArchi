@@ -94,6 +94,28 @@ class SharedModelTest {
     }
 
     @Test
+    void olderArchiGetsItsOwnModelVersionAndKeepsTheSharedOne() throws Exception {
+        try (SharedModel a = shareAsAlice()) {
+            SharedModel.setMaxModelVersion("4.9.0"); // Bob runs Archi 4.9
+            try (SharedModel b = cloneAsBob()) {
+                assertThat(Files.readString(b.modelFile())).contains("version=\"4.9.0\"").doesNotContain("5.0.0");
+                assertThat(b.hasLocalChanges()).isFalse();
+
+                edit(b, "name=\"CRM\"", "name=\"Salesforce\"");
+                SyncResult rb = b.sync(bob);
+                assertThat(rb.committed()).isEqualTo("Changed Application Component 'Salesforce'");
+                assertThat(b.hasLocalChanges()).isFalse();
+            } finally {
+                SharedModel.setMaxModelVersion(null);
+            }
+            SyncResult ra = a.sync(alice);
+            assertThat(ra.received()).contains("Salesforce");
+            assertThat(a.applySync(ra)).isTrue();
+            assertThat(Files.readString(a.modelFile())).contains("version=\"5.0.0\"");
+        }
+    }
+
+    @Test
     void conflictIsResolvedByChoice() throws Exception {
         try (SharedModel a = shareAsAlice(); SharedModel b = cloneAsBob()) {
             edit(a, "name=\"Customer\"", "name=\"Client\"");

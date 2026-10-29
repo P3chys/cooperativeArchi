@@ -283,7 +283,7 @@ final class SyncRunner {
     private static IArchimateModel update(IArchimateModel model, Path file) {
         IArchimateModel incoming = null;
         try {
-            incoming = IEditorModelManager.INSTANCE.load(file.toFile());
+            incoming = Compat.load(file.toFile());
             ModelReconciler.reconcile(model, incoming);
             IArchiveManager images = (IArchiveManager) model.getAdapter(IArchiveManager.class);
             IArchiveManager incomingImages = (IArchiveManager) incoming.getAdapter(IArchiveManager.class);

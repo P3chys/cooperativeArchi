@@ -1,11 +1,12 @@
 package io.github.p3chys.cooperativearchi.ui;
 
-import org.eclipse.core.runtime.ILog;
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.Status;
 import org.eclipse.jface.resource.ImageDescriptor;
 import org.eclipse.ui.plugin.AbstractUIPlugin;
 import org.osgi.framework.BundleContext;
+
+import io.github.p3chys.cooperativearchi.git.SharedModel;
 
 public class Activator extends AbstractUIPlugin {
 
@@ -16,6 +17,7 @@ public class Activator extends AbstractUIPlugin {
     public void start(BundleContext context) throws Exception {
         super.start(context);
         instance = this;
+        SharedModel.setMaxModelVersion(Compat.MAX_MODEL_VERSION);
     }
 
     @Override
@@ -34,6 +36,6 @@ public class Activator extends AbstractUIPlugin {
     }
 
     public static void log(String message, Throwable t) {
-        ILog.of(Activator.class).log(new Status(IStatus.ERROR, ID, message, t));
+        Compat.log().log(new Status(IStatus.ERROR, ID, message, t));
     }
 }

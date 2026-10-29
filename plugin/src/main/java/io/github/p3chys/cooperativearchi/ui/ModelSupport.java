@@ -7,7 +7,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.eclipse.core.commands.ExecutionEvent;
-import org.eclipse.jface.notifications.NotificationPopup;
 import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.jface.viewers.IStructuredSelection;
 import org.eclipse.swt.widgets.Display;
@@ -146,6 +145,6 @@ final class ModelSupport {
     /** Small popup in the corner that disappears by itself. */
     static void notify(String title, String text) {
         Display d = Display.getDefault();
-        d.asyncExec(() -> NotificationPopup.forDisplay(d).title(title, true).text(text).delay(6000).open());
+        d.asyncExec(() -> Compat.notify(d, title, text));
     }
 }

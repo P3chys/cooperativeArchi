@@ -61,6 +61,15 @@ public final class ModelGraph {
         return nodes.containsKey(id);
     }
 
+    /** A copy with one attribute of the model element (e.g. its version) set. */
+    public ModelGraph withRootAttr(String key, String value) {
+        Map<String, String> attrs = new LinkedHashMap<>(root().attrs());
+        attrs.put(key, value);
+        Map<String, ModelNode> copy = new LinkedHashMap<>(nodes);
+        copy.put(rootId, root().withAttrs(attrs));
+        return new ModelGraph(rootId, copy, images);
+    }
+
     // ---------------------------------------------------------------- .archimate file
 
     /** Reads a .archimate file, plain XML or zip archive (model with images). */

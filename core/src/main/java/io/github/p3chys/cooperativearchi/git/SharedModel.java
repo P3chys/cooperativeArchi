@@ -100,8 +100,19 @@ public final class SharedModel implements AutoCloseable {
         }
     };
 
+    private static final String VERSION_ATTR = "version";
+    private static volatile String maxModelVersion;
+
     private final Path modelFile;
     private final Repository repo;
+
+    /**
+     * Writes model files with at most this Archi model version (null = as stored): for an older Archi, which asks
+     * before opening every model a newer Archi saved. The shared model keeps its version (see {@link #commitSaved}).
+     */
+    public static void setMaxModelVersion(String version) {
+        maxModelVersion = version;
+    }
 
     private SharedModel(Path modelFile, Repository repo) {
         this.modelFile = modelFile;
@@ -302,7 +313,8 @@ public final class SharedModel implements AutoCloseable {
             return true;
         }
         try (ObjectInserter ins = repo.newObjectInserter()) {
-            return !writeTree(SplitLayout.write(ModelGraph.read(Files.readAllBytes(modelFile))), ins).equals(treeOf(loaded));
+            ModelGraph saved = keepSharedVersion(ModelGraph.read(Files.readAllBytes(modelFile)), loaded);
+            return !writeTree(SplitLayout.write(saved), ins).equals(treeOf(loaded));
         }
     }
 
@@ -363,9 +375,9 @@ public final class SharedModel implements AutoCloseable {
     private ObjectId commitSaved(ObjectInserter ins, SyncOptions o, SyncResult res) throws IOException {
         byte[] bytes = Files.readAllBytes(modelFile);
         res.fileHashAtRead = sha256(bytes);
-        Map<String, byte[]> files = SplitLayout.write(ModelGraph.read(bytes));
-        ObjectId localTree = writeTree(files, ins);
         ObjectId loaded = loadedId();
+        Map<String, byte[]> files = SplitLayout.write(keepSharedVersion(ModelGraph.read(bytes), loaded));
+        ObjectId localTree = writeTree(files, ins);
         if (loaded != null && treeOf(loaded).equals(localTree)) {
             return loaded;
         }
@@ -946,7 +958,25 @@ public final class SharedModel implements AutoCloseable {
      * merge uses), never taken from the stored snapshot, so a hand-edited snapshot cannot smuggle in content.
      */
     private byte[] snapshot(ObjectId commit) throws IOException {
-        return graph(commit).write();
+        ModelGraph g = graph(commit);
+        String max = maxModelVersion;
+        if (max != null && ModelMerger.compareVersions(g.root().attrs().get(VERSION_ATTR), max) > 0) {
+            g = g.withRootAttr(VERSION_ATTR, max);
+        }
+        return g.write();
+    }
+
+    /**
+     * Archi writes its own model version on every save: a model saved by an older Archi (see
+     * {@link #setMaxModelVersion}) keeps the version of the shared model it was loaded from, so that is no change.
+     */
+    private ModelGraph keepSharedVersion(ModelGraph saved, ObjectId loaded) throws IOException {
+        if (loaded == null) {
+            return saved;
+        }
+        String shared = graph(loaded).root().attrs().get(VERSION_ATTR);
+        return ModelMerger.compareVersions(saved.root().attrs().get(VERSION_ATTR), shared) < 0
+                ? saved.withRootAttr(VERSION_ATTR, shared) : saved;
     }
 
     private static ObjectId writeTree(Map<String, byte[]> files, ObjectInserter ins) throws IOException {

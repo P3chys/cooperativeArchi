@@ -1,12 +1,15 @@
 package io.github.p3chys.cooperativearchi.ui;
 
+import java.io.IOException;
 import java.nio.file.Path;
+import java.util.Map;
 
 import org.eclipse.core.runtime.preferences.IEclipsePreferences;
 import org.eclipse.core.runtime.preferences.InstanceScope;
 import org.eclipse.equinox.security.storage.ISecurePreferences;
 import org.eclipse.equinox.security.storage.SecurePreferencesFactory;
 import org.eclipse.equinox.security.storage.StorageException;
+import org.eclipse.equinox.security.storage.provider.IProviderHints;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.osgi.service.prefs.BackingStoreException;
 
@@ -31,6 +34,8 @@ public final class Prefs {
     public static final int DEFAULT_LIVE_POLL_SECONDS = 3;
     private static final String SECURE_NODE = Activator.ID;
     private static final String TOKEN = "githubToken";
+    /** The token while Archi runs; the only copy when secure storage cannot keep it. */
+    private static volatile String sessionToken;
 
     private Prefs() {
     }
@@ -92,25 +97,45 @@ public final class Prefs {
     }
 
     public static String token() {
+        if (sessionToken == null) {
+            try {
+                sessionToken = secure().get(TOKEN, null);
+            } catch (IOException | StorageException | RuntimeException e) {
+                Activator.log("Cannot read the GitHub token from secure storage", e);
+            }
+        }
+        return sessionToken;
+    }
+
+    /**
+     * Remembers the token for this session and saves it in secure storage. May block (Windows protects the storage
+     * key), so call it off the UI thread.
+     *
+     * @return false if secure storage could not keep it: it is used until Archi closes
+     */
+    public static boolean setToken(String token) {
+        sessionToken = token == null || token.isBlank() ? null : token.trim();
         try {
-            return SecurePreferencesFactory.getDefault().node(SECURE_NODE).get(TOKEN, null);
-        } catch (StorageException e) {
-            Activator.log("Cannot read the GitHub token from secure storage", e);
-            return null;
+            ISecurePreferences node = secure();
+            if (sessionToken == null) {
+                node.remove(TOKEN);
+            } else {
+                node.put(TOKEN, sessionToken, true);
+            }
+            node.flush();
+            return true;
+        } catch (Exception e) {
+            Activator.log("Cannot store the GitHub token in secure storage", e);
+            return false;
         }
     }
 
-    public static void setToken(String token) {
-        try {
-            ISecurePreferences node = SecurePreferencesFactory.getDefault().node(SECURE_NODE);
-            if (token == null || token.isBlank()) {
-                node.remove(TOKEN);
-            } else {
-                node.put(TOKEN, token.trim(), true);
-            }
-            node.flush();
-        } catch (Exception e) {
-            Activator.log("Cannot store the GitHub token in secure storage", e);
-        }
+    /**
+     * Eclipse's default secure storage, opened so that it never opens windows of its own (master password,
+     * recovery questions). Under Citrix those can stay hidden behind Archi and block it; without them it fails
+     * instead, and we keep the token for the session.
+     */
+    private static ISecurePreferences secure() throws IOException {
+        return SecurePreferencesFactory.open(null, Map.of(IProviderHints.PROMPT_USER, Boolean.FALSE)).node(SECURE_NODE);
     }
 }

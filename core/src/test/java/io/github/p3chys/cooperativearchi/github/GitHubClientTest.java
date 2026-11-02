@@ -1,9 +1,13 @@
 package io.github.p3chys.cooperativearchi.github;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.io.IOException;
 
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class GitHubClientTest {
 
@@ -25,5 +29,12 @@ class GitHubClientTest {
     @CsvSource({ "'{\"login\":\"a\\\"b\",\"name\":null}', login, a\"b" })
     void readsStringFields(String json, String field, String expected) {
         assertThat(GitHubClient.string(json, field)).isEqualTo(expected);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = { "ghp_abc\tdef", "ghp_abc def", "ghp_abc\u200bdef", "ghp_abc\ndef" })
+    void rejectsGarbledTokensWithoutEchoingThem(String token) {
+        assertThatThrownBy(() -> new GitHubClient(token).user()).isInstanceOf(IOException.class)
+                .hasMessageContaining("invisible characters").message().doesNotContain("ghp_abc");
     }
 }

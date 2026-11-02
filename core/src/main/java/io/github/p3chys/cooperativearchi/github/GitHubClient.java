@@ -78,6 +78,10 @@ public final class GitHubClient {
     }
 
     private String call(String method, String path, String json, int expected) throws IOException {
+        if (!token.chars().allMatch(c -> c > 0x20 && c < 0x7f)) {
+            // checked here: the HTTP client's own error for a bad header value quotes the value, i.e. the token
+            throw new IOException("The token contains spaces or invisible characters. Copy it from GitHub again.");
+        }
         HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(API + path)).timeout(Duration.ofSeconds(30))
                 .header("Accept", "application/vnd.github+json").header("X-GitHub-Api-Version", "2022-11-28")
                 .header("Authorization", "Bearer " + token);

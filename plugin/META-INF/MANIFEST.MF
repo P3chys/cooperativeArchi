@@ -17,7 +17,8 @@ Require-Bundle: org.eclipse.core.runtime,
  org.eclipse.jgit;bundle-version="${jgitRange}",
  com.archimatetool.model,
  com.archimatetool.editor
-Import-Package: javax.xml,
+Import-Package: javax.net.ssl,
+ javax.xml,
  javax.xml.parsers,
  org.w3c.dom,
  org.xml.sax

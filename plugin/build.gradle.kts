@@ -70,7 +70,7 @@ tasks.jar {
                 }
                 if (embedJGit && key == "Import-Package") {
                     // packages of the Java runtime that the embedded JGit uses
-                    value = "$value,javax.crypto,javax.management,javax.net.ssl,org.xml.sax.helpers"
+                    value = "$value,javax.crypto,javax.management,org.xml.sax.helpers"
                 }
             }
         }

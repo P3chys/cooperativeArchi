@@ -32,8 +32,9 @@ public final class GitHubClient {
     }
 
     private static final String API = "https://api.github.com";
+    // HTTP/1.1 like JGit: HTTP/2 through HTTPS-inspecting proxies can stall
     private final HttpClient http = HttpClient.newBuilder().sslContext(SystemTrust.sslContext())
-            .connectTimeout(Duration.ofSeconds(15))
+            .version(HttpClient.Version.HTTP_1_1).connectTimeout(Duration.ofSeconds(15))
             .followRedirects(HttpClient.Redirect.NORMAL).build();
     private final String token;
 

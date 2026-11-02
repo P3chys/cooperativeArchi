@@ -32,7 +32,8 @@ public final class GitHubClient {
     }
 
     private static final String API = "https://api.github.com";
-    private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15))
+    private final HttpClient http = HttpClient.newBuilder().sslContext(SystemTrust.sslContext())
+            .connectTimeout(Duration.ofSeconds(15))
             .followRedirects(HttpClient.Redirect.NORMAL).build();
     private final String token;
 

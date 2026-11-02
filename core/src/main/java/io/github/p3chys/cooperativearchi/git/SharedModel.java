@@ -58,6 +58,7 @@ import org.eclipse.jgit.transport.URIish;
 import org.eclipse.jgit.treewalk.TreeWalk;
 
 import io.github.p3chys.cooperativearchi.git.ChangeReviewer.Direction;
+import io.github.p3chys.cooperativearchi.github.SystemTrust;
 import io.github.p3chys.cooperativearchi.merge.ChangeSummary;
 import io.github.p3chys.cooperativearchi.merge.ModelDiff;
 import io.github.p3chys.cooperativearchi.merge.ModelMerger;
@@ -686,6 +687,7 @@ public final class SharedModel implements AutoCloseable {
         }
         try {
             Ref ref = Git.lsRemoteRepository().setRemote(url).setHeads(true).setCredentialsProvider(o.credentials())
+                    .setTransportConfigCallback(SystemTrust.transport())
                     .callAsMap().get(R_HEADS + branch());
             return ref == null ? null : ref.getObjectId();
         } catch (TransportException e) {
@@ -719,6 +721,7 @@ public final class SharedModel implements AutoCloseable {
     private FetchResult fetch(SyncOptions o) throws IOException {
         try {
             return Git.wrap(repo).fetch().setRemote(REMOTE).setCredentialsProvider(o.credentials())
+                    .setTransportConfigCallback(SystemTrust.transport())
                     .setProgressMonitor(o.monitor()).setRemoveDeletedRefs(true).call();
         } catch (TransportException e) {
             throw new IOException(friendly(e), e);
@@ -730,6 +733,7 @@ public final class SharedModel implements AutoCloseable {
     private RemoteRefUpdate.Status push(String branch, SyncOptions o) throws IOException {
         try {
             Iterable<PushResult> results = Git.wrap(repo).push().setRemote(REMOTE).setCredentialsProvider(o.credentials())
+                    .setTransportConfigCallback(SystemTrust.transport())
                     .setProgressMonitor(o.monitor()).setRefSpecs(new RefSpec(R_HEADS + branch + ":" + R_HEADS + branch))
                     .call();
             for (PushResult pr : results) {
@@ -760,6 +764,10 @@ public final class SharedModel implements AutoCloseable {
         }
         if (lower.contains("not found") || lower.contains("404")) {
             return "Repository not found or no access: " + m;
+        }
+        if (lower.contains("ssl problems") || lower.contains("pkix") || lower.contains("certification path")) {
+            return "The server's certificate is not trusted (a company proxy or antivirus inspecting HTTPS? Its root"
+                    + " certificate must be in the Windows certificate store or Java's): " + m;
         }
         return "Cannot reach the server: " + m;
     }
@@ -839,6 +847,7 @@ public final class SharedModel implements AutoCloseable {
         if (repo.resolve(R_REMOTES + REMOTE + "/" + name) != null && remoteUrl() != null) {
             try {
                 Git.wrap(repo).push().setRemote(REMOTE).setCredentialsProvider(o.credentials())
+                        .setTransportConfigCallback(SystemTrust.transport())
                         .setRefSpecs(new RefSpec(":" + R_HEADS + name)).call();
                 RefUpdate ru = repo.updateRef(R_REMOTES + REMOTE + "/" + name);
                 ru.setForceUpdate(true);

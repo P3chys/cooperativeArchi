@@ -70,8 +70,8 @@ public final class SystemTrust {
                 KeyStore windows = KeyStore.getInstance("Windows-ROOT");
                 windows.load(null, null);
                 add(all, windows);
-            } catch (GeneralSecurityException | IOException e) {
-                // no Windows store: Java's certificates alone, as before
+            } catch (GeneralSecurityException | IOException | RuntimeException e) {
+                // no readable Windows store (locked-down or virtual desktops): Java's certificates alone, as before
             }
         }
         return all.size() == 1 ? all.get(0) : new AnyOf(all);
@@ -86,7 +86,7 @@ public final class SystemTrust {
                     to.add(x);
                 }
             }
-        } catch (GeneralSecurityException e) {
+        } catch (GeneralSecurityException | RuntimeException e) {
             if (ks == null) {
                 throw new IllegalStateException("No default HTTPS trust", e);
             }

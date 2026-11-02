@@ -32,8 +32,9 @@ public final class GitHubClient {
     }
 
     private static final String API = "https://api.github.com";
+    // HTTP/1.1 like JGit: HTTP/2 through HTTPS-inspecting proxies can stall
     private final HttpClient http = HttpClient.newBuilder().sslContext(SystemTrust.sslContext())
-            .connectTimeout(Duration.ofSeconds(15))
+            .version(HttpClient.Version.HTTP_1_1).connectTimeout(Duration.ofSeconds(15))
             .followRedirects(HttpClient.Redirect.NORMAL).build();
     private final String token;
 
@@ -77,6 +78,10 @@ public final class GitHubClient {
     }
 
     private String call(String method, String path, String json, int expected) throws IOException {
+        if (!token.chars().allMatch(c -> c > 0x20 && c < 0x7f)) {
+            // checked here: the HTTP client's own error for a bad header value quotes the value, i.e. the token
+            throw new IOException("The token contains spaces or invisible characters. Copy it from GitHub again.");
+        }
         HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(API + path)).timeout(Duration.ofSeconds(30))
                 .header("Accept", "application/vnd.github+json").header("X-GitHub-Api-Version", "2022-11-28")
                 .header("Authorization", "Bearer " + token);

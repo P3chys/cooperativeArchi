@@ -1,12 +1,21 @@
 package io.github.p3chys.cooperativearchi.ui;
 
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
+import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.jface.dialogs.IDialogConstants;
+import org.eclipse.jface.dialogs.ProgressMonitorDialog;
 import org.eclipse.jface.dialogs.TitleAreaDialog;
 import org.eclipse.jface.layout.GridDataFactory;
 import org.eclipse.swt.SWT;
-import org.eclipse.swt.custom.BusyIndicator;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.program.Program;
 import org.eclipse.swt.widgets.Composite;
@@ -76,18 +85,22 @@ final class TokenDialog extends TitleAreaDialog {
             return;
         }
         GitHubClient.User[] user = new GitHubClient.User[1];
-        String[] error = new String[1];
-        BusyIndicator.showWhile(getShell().getDisplay(), () -> {
-            try {
-                user[0] = new GitHubClient(value).user();
-            } catch (IOException e) {
-                error[0] = e.getMessage();
+        try {
+            new ProgressMonitorDialog(getShell()).run(true, true, monitor -> user[0] = verify(value, monitor));
+        } catch (InvocationTargetException e) {
+            Throwable cause = e.getCause();
+            if (!(cause instanceof IOException)) {
+                Activator.log("Verifying the GitHub token failed", cause);
             }
-        });
-        if (user[0] == null) {
-            setErrorMessage("Token not accepted: " + error[0]);
+            setErrorMessage("Token not accepted: " + describe(cause));
+            return;
+        } catch (InterruptedException e) {
+            setErrorMessage("Cancelled. GitHub did not answer; check the network or proxy settings.");
             return;
         }
+        // saving may open Eclipse's secure storage password prompt; say where we are in case it hides behind Archi
+        setMessage("Connected as " + user[0].login() + ". Saving the token in Eclipse's secure storage...");
+        getShell().update();
         Prefs.setToken(value);
         Prefs.put(Prefs.LOGIN, user[0].login());
         if (Prefs.get(Prefs.NAME, "").isBlank()) {
@@ -98,6 +111,48 @@ final class TokenDialog extends TitleAreaDialog {
         }
         ModelSupport.notify("GitHub", "Connected as " + user[0].login());
         super.okPressed();
+    }
+
+    /**
+     * Asks GitHub who the token belongs to, in the background: the analyst sees progress and can cancel instead of
+     * Archi freezing while GitHub (or a proxy) does not answer.
+     */
+    private static GitHubClient.User verify(String token, IProgressMonitor monitor)
+            throws InvocationTargetException, InterruptedException {
+        monitor.beginTask("Contacting GitHub...", IProgressMonitor.UNKNOWN);
+        CompletableFuture<GitHubClient.User> call = CompletableFuture.supplyAsync(() -> {
+            try {
+                return new GitHubClient(token).user();
+            } catch (IOException e) {
+                throw new CompletionException(e);
+            }
+        });
+        while (true) {
+            if (monitor.isCanceled()) {
+                call.cancel(true);
+                throw new InterruptedException();
+            }
+            try {
+                return call.get(200, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException e) {
+                // still waiting
+            } catch (ExecutionException e) {
+                throw new InvocationTargetException(e.getCause());
+            }
+        }
+    }
+
+    /** The error and what caused it, so unexpected failures (not just I/O errors) are readable in the dialog. */
+    static String describe(Throwable t) {
+        List<String> parts = new ArrayList<>();
+        for (Throwable c = t; c != null && parts.size() < 4; c = c.getCause()) {
+            String m = c instanceof IOException && c.getMessage() != null ? c.getMessage()
+                    : c.getClass().getSimpleName() + (c.getMessage() == null ? "" : ": " + c.getMessage());
+            if (parts.stream().noneMatch(p -> p.contains(m))) {
+                parts.add(m);
+            }
+        }
+        return String.join(" - caused by ", parts);
     }
 
     @Override

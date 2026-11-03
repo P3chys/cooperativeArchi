@@ -9,9 +9,11 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Supplier;
 
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.jface.dialogs.IDialogConstants;
+import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.dialogs.ProgressMonitorDialog;
 import org.eclipse.jface.dialogs.TitleAreaDialog;
 import org.eclipse.jface.layout.GridDataFactory;
@@ -31,6 +33,8 @@ import io.github.p3chys.cooperativearchi.github.GitHubClient;
 final class TokenDialog extends TitleAreaDialog {
 
     static final String TOKEN_URL = "https://github.com/settings/personal-access-tokens/new";
+    /** Saving normally takes well under a second; Windows may need longer to protect the storage key. */
+    private static final int SAVE_SECONDS = 20;
     private Text token;
 
     private TokenDialog(Shell parent) {
@@ -86,7 +90,16 @@ final class TokenDialog extends TitleAreaDialog {
         }
         GitHubClient.User[] user = new GitHubClient.User[1];
         try {
-            new ProgressMonitorDialog(getShell()).run(true, true, monitor -> user[0] = verify(value, monitor));
+            new ProgressMonitorDialog(getShell()).run(true, true, monitor -> {
+                monitor.beginTask("Contacting GitHub...", IProgressMonitor.UNKNOWN);
+                user[0] = await(() -> {
+                    try {
+                        return new GitHubClient(value).user();
+                    } catch (IOException e) {
+                        throw new CompletionException(e);
+                    }
+                }, monitor, 0);
+            });
         } catch (InvocationTargetException e) {
             Throwable cause = e.getCause();
             if (!(cause instanceof IOException)) {
@@ -98,10 +111,18 @@ final class TokenDialog extends TitleAreaDialog {
             setErrorMessage("Cancelled. GitHub did not answer; check the network or proxy settings.");
             return;
         }
-        // saving may open Eclipse's secure storage password prompt; say where we are in case it hides behind Archi
-        setMessage("Connected as " + user[0].login() + ". Saving the token in Eclipse's secure storage...");
-        getShell().update();
-        Prefs.setToken(value);
+        boolean[] saved = new boolean[1];
+        try {
+            new ProgressMonitorDialog(getShell()).run(true, true, monitor -> {
+                monitor.beginTask("Connected as " + user[0].login() + ". Saving the token...", IProgressMonitor.UNKNOWN);
+                saved[0] = Boolean.TRUE.equals(await(() -> Prefs.setToken(value), monitor, SAVE_SECONDS * 1000L));
+            });
+        } catch (InvocationTargetException | InterruptedException e) {
+            // not saved (cancelled, took too long, or failed): setToken already keeps it for this session
+            if (e instanceof InvocationTargetException ite) {
+                Activator.log("Saving the GitHub token failed", ite.getCause());
+            }
+        }
         Prefs.put(Prefs.LOGIN, user[0].login());
         if (Prefs.get(Prefs.NAME, "").isBlank()) {
             Prefs.put(Prefs.NAME, user[0].displayName());
@@ -109,26 +130,28 @@ final class TokenDialog extends TitleAreaDialog {
         if (Prefs.get(Prefs.EMAIL, "").isBlank()) {
             Prefs.put(Prefs.EMAIL, user[0].commitEmail());
         }
-        ModelSupport.notify("GitHub", "Connected as " + user[0].login());
+        if (saved[0]) {
+            ModelSupport.notify("GitHub", "Connected as " + user[0].login());
+        } else {
+            MessageDialog.openWarning(getShell(), "GitHub", "Connected as " + user[0].login() + ".\n\n"
+                    + "The token could not be saved in Eclipse's secure storage on this computer, so cooperativeArchi"
+                    + " uses it until you close Archi and asks for it again next time. Details are in the error log.");
+        }
         super.okPressed();
     }
 
     /**
-     * Asks GitHub who the token belongs to, in the background: the analyst sees progress and can cancel instead of
-     * Archi freezing while GitHub (or a proxy) does not answer.
+     * Runs {@code work} in the background and waits for it: the analyst sees progress and can cancel instead of
+     * Archi freezing while GitHub, a proxy or secure storage does not answer.
+     *
+     * @param timeoutMillis 0 for no limit; after it the work is abandoned like a cancel
      */
-    private static GitHubClient.User verify(String token, IProgressMonitor monitor)
+    private static <T> T await(Supplier<T> work, IProgressMonitor monitor, long timeoutMillis)
             throws InvocationTargetException, InterruptedException {
-        monitor.beginTask("Contacting GitHub...", IProgressMonitor.UNKNOWN);
-        CompletableFuture<GitHubClient.User> call = CompletableFuture.supplyAsync(() -> {
-            try {
-                return new GitHubClient(token).user();
-            } catch (IOException e) {
-                throw new CompletionException(e);
-            }
-        });
+        CompletableFuture<T> call = CompletableFuture.supplyAsync(work);
+        long deadline = timeoutMillis == 0 ? Long.MAX_VALUE : System.currentTimeMillis() + timeoutMillis;
         while (true) {
-            if (monitor.isCanceled()) {
+            if (monitor.isCanceled() || System.currentTimeMillis() > deadline) {
                 call.cancel(true);
                 throw new InterruptedException();
             }

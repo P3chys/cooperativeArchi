@@ -3,7 +3,6 @@ package io.github.p3chys.cooperativearchi.ui;
 import java.io.File;
 import java.io.IOException;
 
-import org.eclipse.core.runtime.ILog;
 import org.eclipse.jface.notifications.NotificationPopup;
 import org.eclipse.swt.widgets.Display;
 
@@ -26,9 +25,5 @@ final class Compat {
 
     static void notify(Display d, String title, String text) {
         NotificationPopup.forDisplay(d).title(title, true).text(text).delay(6000).open();
-    }
-
-    static ILog log() {
-        return ILog.of(Activator.class);
     }
 }

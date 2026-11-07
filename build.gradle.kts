@@ -10,9 +10,10 @@ plugins {
 
 // Archi line to build for (-ParchiTarget=...): the Java level and JGit version that line bundles.
 // Each target produces its own .archiplugin; one plugin version is published for every supported line.
-// Archi 4.9 bundles no JGit (empty range): the plugin carries its own copy.
+// Empty JGit range: the plugin carries its own copy. Archi 4.9 - 5.1 bundle no JGit, Archi 5.2 - 5.3 only JGit 6.6.
 val archiTargets = mapOf(
     "4.9" to listOf("11", "6.10.0.202406032230-r", ""),  // Archi 4.9.x
+    "5.0" to listOf("17", "6.10.0.202406032230-r", ""),  // Archi 5.0 - 5.3
     "5.4" to listOf("17", "6.10.0.202406032230-r", "[6.10.0,8.0.0)"),  // Archi 5.4 - 5.9
     "5.10" to listOf("21", "7.7.0.202606012155-r", "[7.0.0,8.0.0)"),  // Archi 5.10+
 )

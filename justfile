@@ -12,13 +12,14 @@ default:
 test *args:
     {{gw}} :core:test {{args}}
 
-# build the installable .archiplugin into build/dist (target: Archi line, 4.9, 5.4 or 5.10)
+# build the installable .archiplugin into build/dist (target: Archi line, 4.9, 5.0, 5.4 or 5.10)
 plugin target="5.10":
     {{gw}} :plugin:archiplugin "-ParchiTarget={{target}}"
 
 # build the .archiplugin for every supported Archi line (release files)
 dist:
     {{gw}} :plugin:archiplugin "-ParchiTarget=4.9"
+    {{gw}} :plugin:archiplugin "-ParchiTarget=5.0"
     {{gw}} :plugin:archiplugin "-ParchiTarget=5.4"
     {{gw}} :plugin:archiplugin "-ParchiTarget=5.10"
 
@@ -40,5 +41,6 @@ cli *args:
 # everything: tests + plugin + cli, for every supported Archi line
 check:
     {{gw}} build :core:cliJar "-ParchiTarget=4.9"
+    {{gw}} build :core:cliJar "-ParchiTarget=5.0"
     {{gw}} build :core:cliJar "-ParchiTarget=5.4"
     {{gw}} build :core:cliJar "-ParchiTarget=5.10"

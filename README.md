@@ -18,7 +18,7 @@ without merge conflicts in files. A lightweight alternative to coArchi.
 - Opening a shared model finds it on `main` or `master`, whichever of the two holds it.
 - Works offline: automatic sync saves a local version and uploads it next time.
 
-Requires Archi 4.9 or 5.4+ (Windows and macOS use the same plugin file, see below). Analysts on different Archi
+Requires Archi 4.9 or 5.0+ (Windows and macOS use the same plugin file, see below). Analysts on different Archi
 versions can share one model.
 
 ---
@@ -33,6 +33,7 @@ versions can share one model.
    | Archi       | File                                            |
    |-------------|-------------------------------------------------|
    | 4.9.x       | `cooperativeArchi-<version>-archi4.9.archiplugin`  |
+   | 5.0 – 5.3   | `cooperativeArchi-<version>-archi5.0.archiplugin`  |
    | 5.4 – 5.9   | `cooperativeArchi-<version>-archi5.4.archiplugin`  |
    | 5.10 and up | `cooperativeArchi-<version>-archi5.10.archiplugin` |
 
@@ -113,11 +114,11 @@ Code layout:
 Needs JDK 21 and a local Archi installation (its jars are the compile target; default `E:/Archi`, override with
 `-ParchiHome=...` or in `gradle.properties`).
 
-Each Archi line gets its own build (`-ParchiTarget=4.9|5.4|5.10`, `just plugin <target>`, `just dist` for all).
+Each Archi line gets its own build (`-ParchiTarget=4.9|5.0|5.4|5.10`, `just plugin <target>`, `just dist` for all).
 Calls that differ between lines live in `Compat` (`plugin/src/archi4` for Archi 4.9, `plugin/src/archi5` otherwise).
-Archi 4.9 runs on Java 11 and has no JGit, so its build compiles the same Java 17 sources, rewrites the jar for Java 11
-with [JvmDowngrader](https://github.com/unimined/JvmDowngrader) and carries JGit in `lib/`. It compiles against any
-Archi (a 5.x one is fine). Archi 4.9 keeps its settings and dropins in `Archi4` (`%APPDATA%/Archi4`,
+All of them compile against any Archi (a 5.x one is fine). Archi 4.9 - 5.1 have no JGit and Archi 5.2 - 5.3 only JGit 6.6,
+so the 4.9 and 5.0 builds carry JGit in `lib/`. Archi 4.9 runs on Java 11, so its build compiles the same Java 17
+sources and rewrites the jar for Java 11 with [JvmDowngrader](https://github.com/unimined/JvmDowngrader). Archi 4.9 keeps its settings and dropins in `Archi4` (`%APPDATA%/Archi4`,
 `~/Library/Application Support/Archi4`, `~/.archi4`). Archi 4.9 asks "open anyway?" for models saved by Archi 5, so
 it gets the model with its own model version (4.9.0); the shared model keeps Archi 5's.
 

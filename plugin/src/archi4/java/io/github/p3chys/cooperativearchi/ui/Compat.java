@@ -3,8 +3,6 @@ package io.github.p3chys.cooperativearchi.ui;
 import java.io.File;
 import java.io.IOException;
 
-import org.eclipse.core.runtime.ILog;
-import org.eclipse.core.runtime.Platform;
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.gef.commands.CommandStack;
@@ -86,9 +84,5 @@ final class Compat {
         };
         popup.setDelayClose(6000);
         popup.open();
-    }
-
-    static ILog log() {
-        return Platform.getLog(Activator.class);
     }
 }

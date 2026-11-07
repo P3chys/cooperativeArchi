@@ -15,9 +15,11 @@ val manifestValues = mapOf(
     "javaRelease" to javaRelease,
     "jgitRange" to rootProject.extra["jgitRange"] as String,
 )
-// Archi 4.9 has no JGit bundle and runs on Java 11: the plugin brings JGit along (lib/) and its classes are
-// rewritten for Java 11 after compiling (JvmDowngrader, with the Java API pieces it needs copied into the jar)
-val embedJGit = archiTarget == "4.9"
+// Archi lines without a usable JGit bundle: the plugin brings JGit along (lib/)
+val embedJGit = (rootProject.extra["jgitRange"] as String).isEmpty()
+// Archi 4.9 runs on Java 11: the plugin's classes are rewritten for it after compiling (JvmDowngrader, with the
+// Java API pieces it needs copied into the jar)
+val downgrade = javaRelease.toInt() < 17
 
 // the Archi / Eclipse calls that differ between Archi lines (class Compat)
 sourceSets.main { java.srcDir(if (archiTarget == "4.9") "src/archi4/java" else "src/archi5/java") }
@@ -46,7 +48,7 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     if (embedJGit) {
         embedded("org.eclipse.jgit:org.eclipse.jgit:${rootProject.extra["jgitVersion"]}")
-        embedded("org.slf4j:slf4j-nop:2.0.17") // quiet JGit logging; Archi 4.9 has no SLF4J
+        embedded("org.slf4j:slf4j-nop:2.0.17") // quiet JGit logging; the embedded JGit does not see any SLF4J of Archi
     }
 }
 
@@ -86,21 +88,23 @@ tasks.jar {
     }
 }
 
-// The plugin jar as installed: on Archi 4.9 rewritten for Java 11, with JGit inside.
+// The plugin jar as installed: with JGit inside where Archi has none to use, on Archi 4.9 rewritten for Java 11.
 val bundle: TaskProvider<out AbstractArchiveTask> = if (!embedJGit) tasks.jar else {
-    apply(plugin = "xyz.wagyourtail.jvmdowngrader")
-    configure<xyz.wagyourtail.jvmdg.gradle.JVMDowngraderExtension> {
-        downgradeTo.set(JavaVersion.toVersion(javaRelease))
-        logLevel.set("WARN")
-    }
-    tasks.named<xyz.wagyourtail.jvmdg.gradle.task.ShadeJar>("shadeDowngradedApi") {
-        shadePath.set("io/github/p3chys/cooperativearchi/jvmdg/")
+    val classes = if (!downgrade) tasks.jar.map { zipTree(it.archiveFile) } else {
+        apply(plugin = "xyz.wagyourtail.jvmdowngrader")
+        configure<xyz.wagyourtail.jvmdg.gradle.JVMDowngraderExtension> {
+            downgradeTo.set(JavaVersion.toVersion(javaRelease))
+            logLevel.set("WARN")
+        }
+        val shaded = tasks.named<xyz.wagyourtail.jvmdg.gradle.task.ShadeJar>("shadeDowngradedApi") {
+            shadePath.set("io/github/p3chys/cooperativearchi/jvmdg/")
+        }
+        shaded.map { zipTree(it.archiveFile) }
     }
     tasks.register<Zip>("bundleJar") {
-        val shaded = tasks.named<xyz.wagyourtail.jvmdg.gradle.task.ShadeJar>("shadeDowngradedApi")
         archiveFileName.set(tasks.jar.flatMap { it.archiveFileName })
         destinationDirectory.set(layout.buildDirectory.dir("bundle"))
-        from(shaded.map { zipTree(it.archiveFile) })
+        from(classes)
         from(embedded) { into("lib") }
     }
 }

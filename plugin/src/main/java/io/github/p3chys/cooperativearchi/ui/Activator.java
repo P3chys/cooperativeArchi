@@ -1,6 +1,7 @@
 package io.github.p3chys.cooperativearchi.ui;
 
 import org.eclipse.core.runtime.IStatus;
+import org.eclipse.core.runtime.Platform;
 import org.eclipse.core.runtime.Status;
 import org.eclipse.jface.resource.ImageDescriptor;
 import org.eclipse.ui.plugin.AbstractUIPlugin;
@@ -36,6 +37,6 @@ public class Activator extends AbstractUIPlugin {
     }
 
     public static void log(String message, Throwable t) {
-        Compat.log().log(new Status(IStatus.ERROR, ID, message, t));
+        Platform.getLog(Activator.class).log(new Status(IStatus.ERROR, ID, message, t));
     }
 }

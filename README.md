@@ -17,6 +17,8 @@ without merge conflicts in files. A lightweight alternative to coArchi.
 - **Optional auto-sync** on every save and/or every N minutes.
 - Opening a shared model finds it on `main` or `master`, whichever of the two holds it.
 - Works offline: automatic sync saves a local version and uploads it next time.
+- **Shares the `Assets` folder** next to the model (pictures and documents your descriptions refer to) together
+  with it, see [Assets](#assets-files-next-to-the-model).
 
 Requires Archi 4.9 or 5.0+ (Windows and macOS use the same plugin file, see below). Analysts on different Archi
 versions can share one model.
@@ -86,6 +88,7 @@ nothing.
 ```
 Documents/Archi/cooperativeArchi/my-model/
   my-model.archimate      <- the file Archi opens (plain Archi model)
+  Assets/                 <- optional: pictures and documents, shared with the model
   .coarchi/               <- hidden git repository (history), never edited by hand
 ```
 
@@ -101,6 +104,23 @@ changes and the file did not change during the sync, so nothing you typed can be
 merged on the next Pull. The open model is then updated in place: only the objects that changed are touched, matched by
 id, outside Archi's undo stack. A check confirms the result equals the merged file; if it doesn't, the model is
 closed and reopened instead.
+
+### Assets: files next to the model
+
+A folder called `Assets` next to the model file is shared with the model: put pictures and documents there and
+colleagues get them with the next pull, in the same folder (sharing a model takes its `Assets` folder along). The
+review of a pull or push lists the added, changed and deleted files under *Assets*. Files are merged whole and
+nothing is lost:
+
+- changed by both of you: your colleague's version keeps the name and yours is saved next to it as
+  `name (conflict 1a2b3c4).ext`; a note tells you, and you delete the one you don't need;
+- deleted by one and changed by the other: the file stays;
+- edited while a pull was running: your edit is kept under a conflict name the same way.
+
+Files arrive when the pulled model is loaded, so a model with unsaved changes gets them after you save and pull
+again. A file you only add to the folder is uploaded with the next push or sync. Files over 50 MB, links and names
+that not every operating system accepts (`a:b.png`, `con.txt`) are not shared; a note says so. A colleague still on
+a plugin older than this feature neither gets nor deletes the assets. In the repository they are in `Assets/`.
 
 Code layout:
 

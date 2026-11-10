@@ -371,7 +371,8 @@ class SharedAssetsTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = { "documentation.rules", "documentation (conflict 1a2b3c4).rules" })
+    @ValueSource(strings = { "documentation.rules", "documentation (conflict 1a2b3c4).rules", "documentation.published",
+            "documentation (conflict 1a2b3c4).published" })
     void namedFilesNextToTheModelAreShared(String path) {
         assertThat(SharedFiles.valid(path)).isTrue();
         assertThat(SharedFiles.owns(path)).isTrue();

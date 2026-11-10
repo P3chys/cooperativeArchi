@@ -315,6 +315,27 @@ class SharedAssetsTest {
     }
 
     @Test
+    void liveCheckSeesAFileDroppedIntoTheFolderOnceItHasSettled() throws Exception {
+        try (SharedModel a = shareAsAlice()) {
+            assertThat(a.sharedFilesChanged()).isFalse();
+            write(a, "flow.png", "v1");
+            assertThat(a.sharedFilesChanged()).isFalse(); // written this moment: a copy may still be running
+            java.nio.file.attribute.FileTime earlier = java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() - 10_000);
+            Files.setLastModifiedTime(asset(a, "flow.png"), earlier);
+            assertThat(a.sharedFilesChanged()).isTrue();
+            assertThat(a.sync(alice).committed()).isEqualTo("Added asset 'flow.png'");
+            assertThat(a.sharedFilesChanged()).isFalse();
+
+            Files.writeString(a.modelFile().getParent().resolve("documentation.rules"), "tag red risk");
+            Files.setLastModifiedTime(a.modelFile().getParent().resolve("documentation.rules"), earlier);
+            assertThat(a.sharedFilesChanged()).isTrue();
+            Files.delete(asset(a, "flow.png"));
+            a.sync(alice);
+            assertThat(a.sharedFilesChanged()).isFalse();
+        }
+    }
+
+    @Test
     void rulesFileNextToTheModelIsSharedLikeAnAsset() throws Exception {
         Path source = tmp.resolve("work/source.archimate");
         Files.createDirectories(source.getParent());

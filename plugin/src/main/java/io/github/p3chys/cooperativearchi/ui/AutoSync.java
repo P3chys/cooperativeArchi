@@ -22,7 +22,8 @@ import io.github.p3chys.cooperativearchi.github.GitHubClient;
 /**
  * Automatic syncs: after each save of a shared model, and/or every N minutes. In live mode also: save shared models
  * after a short pause in editing, and check GitHub every few seconds for colleagues' changes (one cheap request per
- * model, a full sync only when something arrived).
+ * model, a full sync only when something arrived). The same check looks at the Assets folder and the shared files
+ * next to the model, which change without the model being saved.
  */
 final class AutoSync {
 
@@ -168,7 +169,7 @@ final class AutoSync {
             try (SharedModel sm = SharedModel.open(file)) {
                 String url = sm.remoteUrl();
                 if (url == null || !url.contains("://") || url.startsWith("file:")) {
-                    if (sm.remoteMoved(SyncOptions.of(null, null, null))) {
+                    if (sm.remoteMoved(SyncOptions.of(null, null, null)) || sm.sharedFilesChanged()) {
                         Display.getDefault().asyncExec(() -> SyncRunner.sync(m, SyncRunner.Mode.AUTO, null));
                     }
                     continue;
@@ -181,7 +182,7 @@ final class AutoSync {
                     ok = false;
                     continue;
                 }
-                if (sm.remoteMoved(SyncOptions.of(GitHubClient.credentials(token), null, null))) {
+                if (sm.remoteMoved(SyncOptions.of(GitHubClient.credentials(token), null, null)) || sm.sharedFilesChanged()) {
                     Display.getDefault().asyncExec(() -> SyncRunner.sync(m, SyncRunner.Mode.AUTO, null));
                 }
             } catch (IOException e) {

@@ -427,6 +427,35 @@ final class SharedFiles {
         }
     }
 
+    /** When a shared file was last written, in milliseconds; 0 if there is none. Links are not followed. */
+    long lastModified() throws IOException {
+        long[] newest = { 0 };
+        if (Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) {
+            Files.walkFileTree(dir, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                    if (attrs.isRegularFile()) {
+                        newest[0] = Math.max(newest[0], attrs.lastModifiedTime().toMillis());
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFileFailed(Path file, IOException e) {
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        }
+        try (var beside = Files.list(workspace)) {
+            for (Path file : (Iterable<Path>) beside::iterator) {
+                if (rootFile(file.getFileName().toString()) && Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
+                    newest[0] = Math.max(newest[0], Files.getLastModifiedTime(file, LinkOption.NOFOLLOW_LINKS).toMillis());
+                }
+            }
+        }
+        return newest[0];
+    }
+
     private static void keep(Map<String, ObjectId> files, String path, ObjectId before) {
         if (before != null) {
             files.put(path, before);

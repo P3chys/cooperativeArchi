@@ -301,6 +301,89 @@ class SharedAssetsTest {
         }
     }
 
+    @Test
+    void changeOfTheSameSizeAtTheSameFileTimeIsSeen() throws Exception {
+        try (SharedModel a = shareAsAlice()) {
+            write(a, "flow.png", "v1");
+            a.sync(alice);
+            var time = Files.getLastModifiedTime(asset(a, "flow.png"));
+            write(a, "flow.png", "v2");
+            Files.setLastModifiedTime(asset(a, "flow.png"), time); // as a coarse file clock would leave it
+            assertThat(a.hasLocalChanges()).isTrue();
+            assertThat(a.sync(alice).committed()).isEqualTo("Changed asset 'flow.png'");
+        }
+    }
+
+    @Test
+    void rulesFileNextToTheModelIsSharedLikeAnAsset() throws Exception {
+        Path source = tmp.resolve("work/source.archimate");
+        Files.createDirectories(source.getParent());
+        Files.writeString(source, TestModels.text());
+        Files.writeString(source.getParent().resolve("documentation.rules"), "tag red risk");
+        Files.writeString(source.getParent().resolve("notes.txt"), "private");
+        try (SharedModel a = SharedModel.share(source, tmp.resolve("alice"), remote)) {
+            assertThat(a.sync(alice).pushed()).isTrue();
+            try (SharedModel b = cloneAsBob()) {
+                assertThat(beside(b, "documentation.rules")).hasContent("tag red risk");
+                assertThat(beside(b, "notes.txt")).doesNotExist(); // only the named files, never the whole folder
+                assertThat(b.hasLocalChanges()).isFalse();
+
+                List<String> reviews = new ArrayList<>();
+                Files.writeString(beside(b, "documentation.rules"), "tag red risk\ntag yellow todo");
+                Files.writeString(beside(b, "other.rules"), "not shared");
+                SyncResult pushed = b.push(bob.withReviewer((diff, direction) -> reviews.add(diff.toText())));
+                assertThat(pushed.committed()).isEqualTo("Changed file 'documentation.rules'");
+                assertThat(reviews).singleElement().asString().contains("Shared files\n  ~ documentation.rules");
+
+                // both change it: the colleague's version keeps the name, the other stays next to it
+                Files.writeString(beside(a, "documentation.rules"), "tag blue idea");
+                SyncResult ra = a.sync(alice);
+                assertThat(ra.notes()).anySatisfy(n -> assertThat(n).contains("File 'documentation.rules'", "(conflict "));
+                assertThat(a.applySync(ra)).isTrue();
+                assertThat(beside(a, "documentation.rules")).hasContent("tag red risk\ntag yellow todo");
+                try (Stream<Path> files = Files.list(a.modelFile().getParent())) {
+                    assertThat(files.map(f -> f.getFileName().toString()).filter(n -> n.startsWith("documentation (conflict "))
+                            .map(n -> read(beside(a, n)))).containsExactly("tag blue idea");
+                }
+
+                Files.delete(beside(a, "documentation.rules"));
+                assertThat(a.sync(alice).committed()).isEqualTo("Deleted file 'documentation.rules'");
+                b.applySync(b.sync(bob));
+                assertThat(beside(b, "documentation.rules")).doesNotExist();
+            }
+        }
+    }
+
+    @Test
+    void manyMergesByAnOlderPluginAreReadWithoutRunningAway() throws Exception {
+        try (SharedModel a = shareAsAlice()) {
+            write(a, "flow.png", "v1");
+            a.sync(alice);
+            try (Git remoteRepo = Git.open(tmp.resolve("remote.git").toFile())) {
+                for (int i = 0; i < 300; i++) {
+                    mergeWithoutAssets(remoteRepo.getRepository(), "main");
+                }
+            }
+            SyncResult r = a.sync(alice);
+            assertThat(a.applySync(r)).isTrue();
+            assertThat(asset(a, "flow.png")).hasContent("v1");
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = { "documentation.rules", "documentation (conflict 1a2b3c4).rules" })
+    void namedFilesNextToTheModelAreShared(String path) {
+        assertThat(SharedFiles.valid(path)).isTrue();
+        assertThat(SharedFiles.owns(path)).isTrue();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = { "other.rules", "model.archimate", "documentation.rules.bak", "sub/documentation.rules",
+            "documentation (conflict xyz).rules", ".coarchi/config", "source.archimate" })
+    void otherFilesNextToTheModelAreNot(String path) {
+        assertThat(SharedFiles.valid(path)).isFalse();
+    }
+
     @ParameterizedTest
     @ValueSource(strings = { "Assets/a.png", "Assets/docs/SLA 2026.pdf", "Assets/Průběh sjednání.png", "Assets/.hidden" })
     void namesEveryComputerAcceptsAreShared(String path) {
@@ -343,6 +426,48 @@ class SharedAssetsTest {
             u.setNewObjectId(commit);
             assertThat(u.update()).isEqualTo(RefUpdate.Result.FAST_FORWARD);
         }
+    }
+
+    /**
+     * A merge commit on top of {@code branch}, of its tip and a side commit, neither carrying assets: what an older
+     * plugin leaves each time it syncs while colleagues uploaded.
+     */
+    private static void mergeWithoutAssets(Repository r, String branch) throws Exception {
+        try (ObjectInserter ins = r.newObjectInserter(); RevWalk w = new RevWalk(r); TreeWalk tw = new TreeWalk(r)) {
+            RevCommit tip = w.parseCommit(r.resolve(Constants.R_HEADS + branch));
+            TreeFormatter tree = new TreeFormatter();
+            tw.addTree(tip.getTree());
+            while (tw.next()) {
+                String name = tw.getNameString();
+                if (!name.equals(SharedFiles.DIR) && !name.equals(SharedFiles.MARKER)) {
+                    tree.append(name, tw.getFileMode(0), tw.getObjectId(0));
+                }
+            }
+            ObjectId treeId = ins.insert(tree);
+            PersonIdent who = new PersonIdent("Carol", "carol@example.com");
+            ObjectId[] made = new ObjectId[2];
+            for (int i = 0; i < 2; i++) {
+                CommitBuilder cb = new CommitBuilder();
+                cb.setTreeId(treeId);
+                if (i == 0) {
+                    cb.setParentId(tip);
+                } else {
+                    cb.setParentIds(tip, made[0]);
+                }
+                cb.setAuthor(who);
+                cb.setCommitter(who);
+                cb.setMessage(i == 0 ? "Side" : "Merge by an older plugin");
+                made[i] = ins.insert(cb);
+            }
+            ins.flush();
+            RefUpdate u = r.updateRef(Constants.R_HEADS + branch);
+            u.setNewObjectId(made[1]);
+            assertThat(u.update()).isEqualTo(RefUpdate.Result.FAST_FORWARD);
+        }
+    }
+
+    private static Path beside(SharedModel m, String name) {
+        return m.modelFile().getParent().resolve(name);
     }
 
     /** Removes what only a plugin that knows about assets records in the workspace. */

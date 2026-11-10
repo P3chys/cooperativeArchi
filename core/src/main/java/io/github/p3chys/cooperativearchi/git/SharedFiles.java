@@ -55,13 +55,20 @@ import io.github.p3chys.cooperativearchi.merge.ModelDiff;
  * (written by an older plugin, which drops what it doesn't know) says nothing about assets: it has those of the
  * version it was made from ({@link #at}). So a colleague on an older plugin never deletes anyone's assets.
  *
- * <p>Paths come from the repository, i.e. from other people: a file is only ever written inside the Assets folder,
- * never through a link, and only under a name every operating system accepts ({@link #valid}).
+ * <p>A few files next to the model file are shared the same way ({@link #ROOT_FILES}): settings that other tools
+ * keep with a model. This plugin knows their names, not what is in them.
+ *
+ * <p>Paths come from the repository, i.e. from other people: a file is only ever written inside the Assets folder
+ * or as one of those files, never through a link, and only under a name every operating system accepts
+ * ({@link #valid}).
  */
 final class SharedFiles {
 
     static final String DIR = "Assets";
     static final String PREFIX = DIR + "/";
+    /** Files next to the model file that are shared like the assets. */
+    static final Set<String> ROOT_FILES = Set.of("documentation.rules");
+    private static final Pattern CONFLICT_COPY = Pattern.compile("(.*) \\(conflict [0-9a-f]{7,40}\\)(\\.[^.]*)?");
     /** In the repository only, never on disk. */
     static final String MARKER = ".coarchi-assets";
     /** GitHub refuses files over 100 MB; half of that keeps uploads and the repository reasonable. */
@@ -70,6 +77,8 @@ final class SharedFiles {
     private static final byte[] MARKER_TEXT = ("The Assets folder is shared with this model by cooperativeArchi.\n"
             + "Without this file, a version says nothing about assets (it was written by an older plugin).\n")
             .getBytes(StandardCharsets.UTF_8);
+    /** Longer than the coarsest file time (2 s on FAT, 1 s on some others). */
+    private static final long SETTLED = 3000;
     private static final String TEMP_SUFFIX = ".coarchi-tmp";
     private static final Set<String> JUNK = Set.of("thumbs.db", ".ds_store", "desktop.ini");
     private static final Pattern RESERVED = Pattern.compile("(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(\\..*)?");
@@ -82,7 +91,16 @@ final class SharedFiles {
         static final Assets NONE = new Assets(Collections.emptySortedMap(), false);
     }
 
-    private record Stamp(long size, long modified, ObjectId id) {
+    /**
+     * A file's content id with the size and time it had. It is believed only if the file was already older than
+     * {@link #SETTLED} when it was read: a file changed twice within the clock's step keeps its time, and with the
+     * same size the second change would go unseen.
+     */
+    private record Stamp(long size, long modified, long taken, ObjectId id) {
+
+        boolean holds(BasicFileAttributes attrs) {
+            return size == attrs.size() && modified == attrs.lastModifiedTime().toMillis() && modified + SETTLED < taken;
+        }
     }
 
     // content ids of files on disk, so a sync reads only the files that changed
@@ -93,11 +111,28 @@ final class SharedFiles {
     private static final Set<String> REPORTED = ConcurrentHashMap.newKeySet();
 
     private final Repository repo;
+    private final Path workspace;
     private final Path dir;
 
     SharedFiles(Repository repo, Path workspace) {
         this.repo = repo;
+        this.workspace = workspace;
         this.dir = workspace.resolve(DIR);
+    }
+
+    /** One of {@link #ROOT_FILES}, or the conflict copy of one (see {@link #conflictPath}). */
+    static boolean rootFile(String path) {
+        if (path.indexOf('/') >= 0) {
+            return false;
+        }
+        java.util.regex.Matcher copy = CONFLICT_COPY.matcher(path);
+        return ROOT_FILES.contains(path)
+                || (copy.matches() && ROOT_FILES.contains(copy.group(1) + (copy.group(2) == null ? "" : copy.group(2))));
+    }
+
+    /** Where a shared file is on this computer. */
+    private Path file(String path) {
+        return path.startsWith(PREFIX) ? dir.resolve(path.substring(PREFIX.length())) : workspace.resolve(path);
     }
 
     private static <K, V> Map<K, V> lru(int size) {
@@ -118,6 +153,17 @@ final class SharedFiles {
      * from; made by merging two, what merging their assets gives.
      */
     Assets at(ObjectId commit) throws IOException {
+        return at(commit, new java.util.HashMap<>(), 0);
+    }
+
+    /** Merges of versions without assets nested deeper than this are read along their first parent only. */
+    private static final int MAX_DEPTH = 64;
+
+    /**
+     * @param seen  what this call worked out already, so no version is worked out twice whatever the history is
+     * @param depth how many merges without assets lead here: the history comes from other people and is bounded
+     */
+    private Assets at(ObjectId commit, Map<ObjectId, Assets> seen, int depth) throws IOException {
         if (commit == null) {
             return Assets.NONE;
         }
@@ -127,7 +173,7 @@ final class SharedFiles {
             ObjectId current = commit;
             boolean carried = false; // true of a version is true of the one it was made from, if that one carries none
             while (assets == null) {
-                assets = AT.get(current);
+                assets = seen.containsKey(current) ? seen.get(current) : AT.get(current);
                 if (assets != null) {
                     break;
                 }
@@ -137,15 +183,17 @@ final class SharedFiles {
                     assets = read(c.getTree());
                 } else if (c.getParentCount() == 0 || !(carried = carried || carriedBefore(current))) {
                     assets = Assets.NONE;
-                } else if (c.getParentCount() == 1) {
+                } else if (c.getParentCount() == 1 || depth >= MAX_DEPTH) {
                     current = c.getParent(0);
                 } else {
                     ObjectId base = mergeBase(c.getParent(0), c.getParent(1));
-                    assets = merge(at(base), at(c.getParent(0)), at(c.getParent(1)), null, new ArrayList<>());
+                    assets = merge(at(base, seen, depth + 1), at(c.getParent(0), seen, depth + 1),
+                            at(c.getParent(1), seen, depth + 1), null, new ArrayList<>());
                 }
             }
         }
         for (ObjectId id : passed) {
+            seen.put(id, assets);
             AT.put(id, assets);
         }
         return assets;
@@ -219,6 +267,15 @@ final class SharedFiles {
                 }
             }
         }
+        try (TreeWalk tw = new TreeWalk(repo)) {
+            tw.addTree(tree);
+            tw.setRecursive(false);
+            while (tw.next()) {
+                if (!tw.isSubtree() && rootFile(tw.getNameString())) {
+                    files.put(tw.getNameString(), tw.getObjectId(0));
+                }
+            }
+        }
         return new Assets(Collections.unmodifiableSortedMap(files), true);
     }
 
@@ -241,7 +298,7 @@ final class SharedFiles {
 
     /** True for a repository path that belongs to the assets, not to the model. */
     static boolean owns(String path) {
-        return path.equals(MARKER) || path.startsWith(PREFIX);
+        return path.equals(MARKER) || path.startsWith(PREFIX) || rootFile(path);
     }
 
     // ================================================================ merge
@@ -269,12 +326,12 @@ final class SharedFiles {
                 result = t;
             } else if (m == null || t == null) {
                 result = m == null ? t : m;
-                note(notes, label, "Asset '" + name(path) + "' was deleted on one side and changed on the other: it is kept");
+                note(notes, label, label(path) + " was deleted on one side and changed on the other: it is kept");
             } else {
                 result = t;
                 String copy = conflictPath(path, m, paths);
                 out.put(copy, m);
-                note(notes, label, "Asset '" + name(path) + "' was changed here and in " + label + ": that version keeps the "
+                note(notes, label, label(path) + " was changed here and in " + label + ": that version keeps the "
                         + "name, yours is saved as '" + name(copy) + "'");
             }
             if (result != null) {
@@ -320,24 +377,8 @@ final class SharedFiles {
             Files.walkFileTree(dir, new SimpleFileVisitor<>() {
                 @Override
                 public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                    String path = PREFIX + dir.relativize(file).toString().replace(file.getFileSystem().getSeparator(), "/");
-                    ObjectId before = known.files().get(path);
-                    if (!attrs.isRegularFile() || (before == null && junk(file.getFileName().toString()))) {
-                        return FileVisitResult.CONTINUE;
-                    }
-                    if (!valid(path)) {
-                        report(notes, "Asset '" + name(path) + "' is not shared: its name is not usable on every computer");
-                    } else if (attrs.size() > MAX_SIZE) {
-                        keep(files, path, before);
-                        report(notes, "Asset '" + name(path) + "' is larger than " + size(MAX_SIZE) + " and is not uploaded");
-                    } else {
-                        try {
-                            files.put(path, id(file, attrs, ins));
-                        } catch (IOException e) {
-                            keep(files, path, before);
-                            report(notes, "Asset '" + name(path) + "' could not be read and is not uploaded: " + e.getMessage());
-                        }
-                    }
+                    take(file, attrs, PREFIX + dir.relativize(file).toString().replace(file.getFileSystem().getSeparator(), "/"),
+                            known, files, ins, notes);
                     return FileVisitResult.CONTINUE;
                 }
 
@@ -347,12 +388,43 @@ final class SharedFiles {
                 }
             });
         }
+        try (var beside = Files.list(workspace)) {
+            for (Path file : (Iterable<Path>) beside::iterator) {
+                String name = file.getFileName().toString();
+                if (rootFile(name)) {
+                    take(file, Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS), name, known,
+                            files, ins, notes);
+                }
+            }
+        }
         for (Map.Entry<String, ObjectId> k : known.files().entrySet()) {
             if (!files.containsKey(k.getKey()) && !storable(k.getKey(), known.files().keySet())) {
                 files.put(k.getKey(), k.getValue());
             }
         }
         return new Assets(Collections.unmodifiableSortedMap(files), known.shared() || !files.isEmpty());
+    }
+
+    /** One file found on disk: its content id, or as it was shared before if it cannot be taken now. */
+    private void take(Path file, BasicFileAttributes attrs, String path, Assets known, Map<String, ObjectId> files,
+            ObjectInserter ins, List<String> notes) {
+        ObjectId before = known.files().get(path);
+        if (!attrs.isRegularFile() || (before == null && junk(file.getFileName().toString()))) {
+            return;
+        }
+        if (!valid(path)) {
+            report(notes, label(path) + " is not shared: its name is not usable on every computer");
+        } else if (attrs.size() > MAX_SIZE) {
+            keep(files, path, before);
+            report(notes, label(path) + " is larger than " + size(MAX_SIZE) + " and is not uploaded");
+        } else {
+            try {
+                files.put(path, id(file, attrs, ins));
+            } catch (IOException e) {
+                keep(files, path, before);
+                report(notes, label(path) + " could not be read and is not uploaded: " + e.getMessage());
+            }
+        }
     }
 
     private static void keep(Map<String, ObjectId> files, String path, ObjectId before) {
@@ -375,12 +447,12 @@ final class SharedFiles {
 
     private ObjectId id(Path file, BasicFileAttributes attrs, ObjectInserter ins) throws IOException {
         Stamp stamp = STAMPS.get(file);
-        if (stamp != null && stamp.size == attrs.size() && stamp.modified == attrs.lastModifiedTime().toMillis()
-                && repo.getObjectDatabase().has(stamp.id)) {
+        if (stamp != null && stamp.holds(attrs) && repo.getObjectDatabase().has(stamp.id)) {
             return stamp.id;
         }
+        long taken = System.currentTimeMillis();
         ObjectId id = ins.insert(Constants.OBJ_BLOB, Files.readAllBytes(file));
-        STAMPS.put(file, new Stamp(attrs.size(), attrs.lastModifiedTime().toMillis(), id));
+        STAMPS.put(file, new Stamp(attrs.size(), attrs.lastModifiedTime().toMillis(), taken, id));
         return id;
     }
 
@@ -410,11 +482,11 @@ final class SharedFiles {
             }
             if (!storable(path, paths)) {
                 if (t != null) {
-                    report(notes, "Asset '" + name(path) + "' cannot be stored on this computer; it stays shared");
+                    report(notes, label(path) + " cannot be stored on this computer; it stays shared");
                 }
                 continue;
             }
-            Path file = dir.resolve(path.substring(PREFIX.length()));
+            Path file = file(path);
             ObjectId d = onDisk(file);
             if (Objects.equals(d, t)) {
                 continue;
@@ -428,10 +500,10 @@ final class SharedFiles {
                 continue;
             }
             if (d != null && !Objects.equals(d, f)) {
-                Path copy = dir.resolve(conflictPath(path, d, paths).substring(PREFIX.length()));
-                Files.move(file, copy, StandardCopyOption.REPLACE_EXISTING);
-                notes.add("Asset '" + name(path) + "' changed on this computer and in the shared model: the shared version "
-                        + "keeps the name, yours is saved as '" + dir.relativize(copy).toString().replace('\\', '/') + "'");
+                String copy = conflictPath(path, d, paths);
+                Files.move(file, file(copy), StandardCopyOption.REPLACE_EXISTING);
+                notes.add(label(path) + " changed on this computer and in the shared model: the shared version "
+                        + "keeps the name, yours is saved as '" + name(copy) + "'");
             }
             write(file, t);
         }
@@ -440,7 +512,7 @@ final class SharedFiles {
     /** Puts back the files of a version that are not on disk; nothing is overwritten or deleted. */
     void addMissing(Assets of) throws IOException {
         for (Map.Entry<String, ObjectId> f : of.files().entrySet()) {
-            Path file = dir.resolve(f.getKey().substring(PREFIX.length()));
+            Path file = file(f.getKey());
             if (storable(f.getKey(), of.files().keySet()) && !Files.exists(file, LinkOption.NOFOLLOW_LINKS)) {
                 write(file, f.getValue());
             }
@@ -455,7 +527,7 @@ final class SharedFiles {
         }
         Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         BasicFileAttributes attrs = Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-        STAMPS.put(file, new Stamp(attrs.size(), attrs.lastModifiedTime().toMillis(), content.copy()));
+        STAMPS.put(file, new Stamp(attrs.size(), attrs.lastModifiedTime().toMillis(), System.currentTimeMillis(), content.copy()));
     }
 
     /** Removes the folders a deleted file leaves empty, up to the Assets folder itself. */
@@ -489,14 +561,15 @@ final class SharedFiles {
             }
         }
         try {
-            if (Files.exists(dir, LinkOption.NOFOLLOW_LINKS) && !Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) {
+            Path root = path.startsWith(PREFIX) ? dir : workspace;
+            if (Files.exists(root, LinkOption.NOFOLLOW_LINKS) && !Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) {
                 return false;
             }
-            Path file = dir.resolve(path.substring(PREFIX.length())).normalize();
-            if (!file.startsWith(dir)) {
+            Path file = file(path).normalize();
+            if (!file.startsWith(root)) {
                 return false;
             }
-            for (Path p = file.getParent(); !p.equals(dir); p = p.getParent()) {
+            for (Path p = file.getParent(); !p.equals(root); p = p.getParent()) {
                 if (Files.exists(p, LinkOption.NOFOLLOW_LINKS) && !Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS)) {
                     return false;
                 }
@@ -507,8 +580,11 @@ final class SharedFiles {
         }
     }
 
-    /** A path under Assets/ whose every part is a file name Windows, macOS and Linux all accept. */
+    /** A path under Assets/ whose every part is a file name Windows, macOS and Linux all accept, or a shared file. */
     static boolean valid(String path) {
+        if (rootFile(path)) {
+            return true;
+        }
         if (!path.startsWith(PREFIX) || path.length() == PREFIX.length() || path.endsWith("/")) {
             return false;
         }
@@ -522,8 +598,17 @@ final class SharedFiles {
         return true;
     }
 
-    /** Copies an Assets folder (of a model about to be shared) into a new workspace; links are left out. */
-    static void copyFolder(Path from, Path workspace) throws IOException {
+    /**
+     * Copies the Assets folder and the shared files of a model about to be shared from its folder into a new
+     * workspace; links are left out.
+     */
+    static void copyFrom(Path modelFolder, Path workspace) throws IOException {
+        for (String name : ROOT_FILES) {
+            if (Files.isRegularFile(modelFolder.resolve(name), LinkOption.NOFOLLOW_LINKS)) {
+                Files.copy(modelFolder.resolve(name), workspace.resolve(name), StandardCopyOption.REPLACE_EXISTING);
+            }
+        }
+        Path from = modelFolder.resolve(DIR);
         if (!Files.isDirectory(from, LinkOption.NOFOLLOW_LINKS)) {
             return;
         }
@@ -551,12 +636,14 @@ final class SharedFiles {
     /** e.g. "Added asset 'flow.png', changed 2 assets"; null if the files are the same. */
     static String summary(Assets before, Assets after) {
         Map<String, List<String>> byVerb = new LinkedHashMap<>();
-        changes(before, after).forEach((path, verb) -> byVerb.computeIfAbsent(verb, k -> new ArrayList<>()).add(name(path)));
+        changes(before, after).forEach((path, verb) -> byVerb.computeIfAbsent(verb, k -> new ArrayList<>()).add(path));
         List<String> parts = new ArrayList<>();
         for (String verb : List.of("Added", "Changed", "Deleted")) {
             List<String> names = byVerb.get(verb);
             if (names != null) {
-                String text = names.size() == 1 ? "asset '" + names.get(0) + "'" : names.size() + " assets";
+                String text = names.size() == 1 ? label(names.get(0)).toLowerCase(Locale.ROOT).substring(0, 1)
+                        + label(names.get(0)).substring(1)
+                        : names.size() + (names.stream().allMatch(n -> n.startsWith(PREFIX)) ? " assets" : " shared files");
                 parts.add((parts.isEmpty() ? verb : verb.toLowerCase(Locale.ROOT)) + " " + text);
             }
         }
@@ -573,7 +660,8 @@ final class SharedFiles {
                 ModelDiff.Kind kind = b == null ? ModelDiff.Kind.ADDED : a == null ? ModelDiff.Kind.DELETED : ModelDiff.Kind.CHANGED;
                 List<ModelDiff.Change> details = kind == ModelDiff.Kind.DELETED ? List.of()
                         : List.of(new ModelDiff.Change(kind, "File", b == null ? null : size(reader, b), size(reader, a)));
-                entries.add(new ModelDiff.Entry(kind, "Assets", name(c.getKey()), details));
+                entries.add(new ModelDiff.Entry(kind, c.getKey().startsWith(PREFIX) ? "Assets" : "Shared files",
+                        name(c.getKey()), details));
             }
         }
         return entries;
@@ -602,8 +690,13 @@ final class SharedFiles {
                 : String.format(Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024));
     }
 
-    /** The path as the user knows it, inside the Assets folder. */
+    /** The path as the user knows it: inside the Assets folder, or the name of a file next to the model. */
     static String name(String path) {
-        return path.substring(PREFIX.length());
+        return path.startsWith(PREFIX) ? path.substring(PREFIX.length()) : path;
+    }
+
+    /** "Asset 'flow.png'", "File 'documentation.rules'". */
+    private static String label(String path) {
+        return (path.startsWith(PREFIX) ? "Asset '" : "File '") + name(path) + "'";
     }
 }

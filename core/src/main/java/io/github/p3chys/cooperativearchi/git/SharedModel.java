@@ -79,7 +79,7 @@ import io.github.p3chys.cooperativearchi.model.SplitLayout;
  * Local edits are always committed on top of that commit, so the file is only overwritten when the
  * caller confirms (via {@link #applySync}) that Archi has no unsaved changes.
  *
- * <p>The {@code Assets} folder next to the model file is shared with it ({@link SharedFiles}): its files are
+ * <p>The {@code Assets} folder next to the model file, and a few named files there, are shared with it ({@link SharedFiles}): they are
  * committed, merged and written back together with the model. The config value {@code assets} records which commit
  * the folder corresponds to; it is {@code loaded} unless an older plugin, which leaves the folder alone, moved that.
  */
@@ -159,7 +159,7 @@ public final class SharedModel implements AutoCloseable {
         Files.copy(sourceModel, target, StandardCopyOption.REPLACE_EXISTING);
         Path sourceDir = sourceModel.toAbsolutePath().getParent();
         if (sourceDir != null) {
-            SharedFiles.copyFolder(sourceDir.resolve(SharedFiles.DIR), workspaceDir);
+            SharedFiles.copyFrom(sourceDir, workspaceDir);
         }
         Repository r = init(workspaceDir, remoteUrl);
         SharedModel m = new SharedModel(target, r);

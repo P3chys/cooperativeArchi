@@ -122,6 +122,10 @@ again. A file you only add to the folder is uploaded with the next push or sync.
 that not every operating system accepts (`a:b.png`, `con.txt`) are not shared; a note says so. A colleague still on
 a plugin older than this feature neither gets nor deletes the assets. In the repository they are in `Assets/`.
 
+The file `documentation.rules` next to the model file (the formatting rules of the documentationArchi plugin, if
+you use it) is shared the same way, and listed in the review under *Shared files*. Other files in the folder are
+not shared.
+
 Code layout:
 
 | Path | Content |

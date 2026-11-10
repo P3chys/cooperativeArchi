@@ -86,6 +86,16 @@ public final class ModelDiff {
         return new Builder(b, after).build();
     }
 
+    /** This difference with more entries after its own, e.g. the files shared next to the model. */
+    public ModelDiff with(List<Entry> more) {
+        if (more.isEmpty()) {
+            return this;
+        }
+        List<Entry> all = new ArrayList<>(entries);
+        all.addAll(more);
+        return new ModelDiff(all, layoutChanges);
+    }
+
     public List<Entry> entries() {
         return entries;
     }

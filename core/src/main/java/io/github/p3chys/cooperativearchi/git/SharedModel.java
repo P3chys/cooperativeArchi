@@ -78,6 +78,10 @@ import io.github.p3chys.cooperativearchi.model.SplitLayout;
  * <p>Safety: the config value {@code loaded} records which commit the model file on disk corresponds to.
  * Local edits are always committed on top of that commit, so the file is only overwritten when the
  * caller confirms (via {@link #applySync}) that Archi has no unsaved changes.
+ *
+ * <p>The {@code Assets} folder next to the model file, and a few named files there, are shared with it ({@link SharedFiles}): they are
+ * committed, merged and written back together with the model. The config value {@code assets} records which commit
+ * the folder corresponds to; it is {@code loaded} unless an older plugin, which leaves the folder alone, moved that.
  */
 public final class SharedModel implements AutoCloseable {
 
@@ -106,6 +110,7 @@ public final class SharedModel implements AutoCloseable {
 
     private final Path modelFile;
     private final Repository repo;
+    private final SharedFiles assets;
 
     /**
      * Writes model files with at most this Archi model version (null = as stored): for an older Archi, which asks
@@ -118,6 +123,7 @@ public final class SharedModel implements AutoCloseable {
     private SharedModel(Path modelFile, Repository repo) {
         this.modelFile = modelFile;
         this.repo = repo;
+        this.assets = new SharedFiles(repo, modelFile.getParent());
     }
 
     // ================================================================ create / open
@@ -151,6 +157,10 @@ public final class SharedModel implements AutoCloseable {
         prepareEmptyDir(workspaceDir);
         Path target = modelFileIn(workspaceDir);
         Files.copy(sourceModel, target, StandardCopyOption.REPLACE_EXISTING);
+        Path sourceDir = sourceModel.toAbsolutePath().getParent();
+        if (sourceDir != null) {
+            SharedFiles.copyFrom(sourceDir, workspaceDir);
+        }
         Repository r = init(workspaceDir, remoteUrl);
         SharedModel m = new SharedModel(target, r);
         m.setBranch(DEFAULT_BRANCH);
@@ -172,7 +182,7 @@ public final class SharedModel implements AutoCloseable {
             ObjectId tip = r.resolve(R_REMOTES + REMOTE + "/" + branch);
             m.setRef(branch, tip);
             m.setBranch(branch);
-            m.applyWorkingFile(m.snapshot(tip), tip, null);
+            m.applyWorkingFile(m.snapshot(tip), tip, null, new ArrayList<>());
             return m;
         } catch (IOException | RuntimeException e) {
             m.close();
@@ -287,10 +297,36 @@ public final class SharedModel implements AutoCloseable {
         return id == null ? null : ObjectId.fromString(id);
     }
 
+    /** The model file and the Assets folder now correspond to this commit. */
     private void setLoaded(ObjectId id) throws IOException {
         StoredConfig cfg = repo.getConfig();
         cfg.setString(SECTION, null, "loaded", id.name());
+        cfg.setString(SECTION, null, "assets", id.name());
         cfg.save();
+    }
+
+    /** The commit the Assets folder corresponds to; null if it was never brought up to one. */
+    private ObjectId assetsId() {
+        String id = repo.getConfig().getString(SECTION, null, "assets");
+        return id == null ? null : ObjectId.fromString(id);
+    }
+
+    /** The assets of the loaded version, the Assets folder as it is, and what the two give to commit. */
+    private record SavedAssets(SharedFiles.Assets loaded, SharedFiles.Assets disk, SharedFiles.Assets saved) {
+    }
+
+    /**
+     * The assets to commit with the saved model. Usually just the folder as it is. After an older plugin moved
+     * {@code loaded} on without touching the folder: the assets of the loaded version, with what changed in the
+     * folder since it was last brought up to date.
+     */
+    private SavedAssets savedAssets(ObjectId loaded, ObjectInserter ins, List<String> notes) throws IOException {
+        SharedFiles.Assets inLoaded = assets.at(loaded);
+        ObjectId folderAt = assetsId();
+        SharedFiles.Assets base = Objects.equals(folderAt, loaded) ? inLoaded : assets.at(folderAt);
+        SharedFiles.Assets disk = assets.scan(base, ins, notes);
+        return new SavedAssets(inLoaded, disk,
+                base.equals(inLoaded) ? disk : SharedFiles.merge(base, disk, inLoaded, "the shared model", notes));
     }
 
     private String pendingMessage() {
@@ -307,7 +343,7 @@ public final class SharedModel implements AutoCloseable {
         cfg.save();
     }
 
-    /** True if the saved model file differs from the last synced version. */
+    /** True if the saved model file or the Assets folder differs from the last synced version. */
     public boolean hasLocalChanges() throws IOException {
         ObjectId loaded = loadedId();
         if (loaded == null) {
@@ -315,7 +351,8 @@ public final class SharedModel implements AutoCloseable {
         }
         try (ObjectInserter ins = repo.newObjectInserter()) {
             ModelGraph saved = keepSharedVersion(ModelGraph.read(Files.readAllBytes(modelFile)), loaded);
-            return !writeTree(SplitLayout.write(saved), ins).equals(treeOf(loaded));
+            SharedFiles.Assets files = savedAssets(loaded, ins, new ArrayList<>()).saved();
+            return !writeTree(SplitLayout.write(saved), files, ins).equals(treeOf(loaded));
         }
     }
 
@@ -370,30 +407,66 @@ public final class SharedModel implements AutoCloseable {
     }
 
     /**
-     * Commits the saved model file on top of the version it was loaded from if it changed (summary in
-     * {@link SyncResult#committed}). Returns the commit the file corresponds to now.
+     * Commits the saved model file and the Assets folder on top of the version they were loaded from if they
+     * changed (summary in {@link SyncResult#committed}). Returns the commit they correspond to now.
      */
     private ObjectId commitSaved(ObjectInserter ins, SyncOptions o, SyncResult res) throws IOException {
         byte[] bytes = Files.readAllBytes(modelFile);
         res.fileHashAtRead = sha256(bytes);
         ObjectId loaded = loadedId();
         Map<String, byte[]> files = SplitLayout.write(keepSharedVersion(ModelGraph.read(bytes), loaded));
-        ObjectId localTree = writeTree(files, ins);
-        if (loaded != null && treeOf(loaded).equals(localTree)) {
-            return loaded;
+        SavedAssets a = savedAssets(loaded, ins, res.notes);
+        ObjectId localTree = writeTree(files, a.saved(), ins);
+        ObjectId local = loaded;
+        if (loaded == null || !treeOf(loaded).equals(localTree)) {
+            ModelGraph saved = SplitLayout.read(files);
+            cacheGraph(localTree, saved);
+            String summary;
+            if (loaded == null) {
+                summary = "First version of '" + saved.root().name() + "'";
+            } else {
+                ChangeSummary model = ChangeSummary.of(graph(loaded), saved);
+                String fileChanges = SharedFiles.summary(a.loaded(), a.saved());
+                // nothing changed, but the loaded version comes from an older plugin and carries no assets itself
+                summary = model.isEmpty() && fileChanges == null && a.saved().shared() && !assets.carries(loaded) ? null
+                        : describe(model, fileChanges);
+            }
+            String text = summary != null ? summary : "Shared assets kept";
+            String message = o.message() != null && !o.message().isBlank() ? o.message().trim()
+                    : pendingMessage() != null ? pendingMessage() + "\n\n" + text : text;
+            local = commit(ins, localTree, message, o.author(), loaded == null ? new ObjectId[0] : new ObjectId[] { loaded });
+            res.committed = summary;
+            setPendingMessage(null);
         }
-        ModelGraph before = loaded == null ? null : graph(loaded);
-        ModelGraph saved = SplitLayout.read(files);
-        cacheGraph(localTree, saved);
-        String summary = loaded == null ? "First version of '" + saved.root().name() + "'"
-                : ChangeSummary.of(before, saved).toString();
-        String message = o.message() != null && !o.message().isBlank() ? o.message().trim()
-                : pendingMessage() != null ? pendingMessage() + "\n\n" + summary : summary;
-        ObjectId local = commit(ins, localTree, message, o.author(), loaded == null ? new ObjectId[0] : new ObjectId[] { loaded });
-        res.committed = summary;
-        setLoaded(local);
-        setPendingMessage(null);
+        if (!a.disk().equals(a.saved())) {
+            assets.apply(a.disk(), a.saved(), res.notes); // only adds what the folder never got; see savedAssets
+        }
+        if (!local.equals(loaded) || !local.equals(assetsId())) {
+            setLoaded(local);
+        }
         return local;
+    }
+
+    /** The changes of the model and of the assets in one line. */
+    private static String describe(ChangeSummary model, String fileChanges) {
+        if (fileChanges == null) {
+            return model.toString();
+        }
+        return model.isEmpty() ? fileChanges
+                : model + ", " + fileChanges.substring(0, 1).toLowerCase(Locale.ROOT) + fileChanges.substring(1);
+    }
+
+    /** What changes from one version to another; null if only an older plugin's missing assets were put back. */
+    private String changes(ObjectId from, ObjectId to) throws IOException {
+        ChangeSummary model = ChangeSummary.of(graph(from), graph(to));
+        String fileChanges = SharedFiles.summary(assets.at(from), assets.at(to));
+        return model.isEmpty() && fileChanges == null && assets.carries(from) != assets.carries(to) ? null
+                : describe(model, fileChanges);
+    }
+
+    /** The difference of the models and of the assets, for a review. */
+    private ModelDiff diff(ObjectId from, ObjectId to) throws IOException {
+        return ModelDiff.of(from == null ? null : graph(from), graph(to)).with(assets.diff(assets.at(from), assets.at(to)));
     }
 
     private SyncResult doSync(SyncOptions o) throws IOException, SyncCancelledException {
@@ -448,7 +521,7 @@ public final class SharedModel implements AutoCloseable {
 
             res.newHead = result;
             if (!treeOf(result).equals(localTree)) {
-                res.received = ChangeSummary.of(graph(local), graph(result)).toString();
+                res.received = changes(local, result);
                 res.modelToLoad = snapshot(result);
             } else if (!result.equals(local)) {
                 setLoaded(result);
@@ -483,13 +556,13 @@ public final class SharedModel implements AutoCloseable {
                 }
                 return res;
             }
-            ModelDiff diff = ModelDiff.of(graph(local), graph(merged));
-            if (!o.reviewer().review(diff, Direction.PULL)) {
+            ModelDiff diff = diff(local, merged);
+            if (!diff.isEmpty() && !o.reviewer().review(diff, Direction.PULL)) {
                 throw new SyncCancelledException();
             }
             setRef(branch, merged);
             res.diff = diff;
-            res.received = ChangeSummary.of(graph(local), graph(merged)).toString();
+            res.received = changes(local, merged);
             res.modelToLoad = snapshot(merged);
             return res;
         }
@@ -527,10 +600,8 @@ public final class SharedModel implements AutoCloseable {
             }
             // a branch that is new on GitHub is compared with the model GitHub has on main / master
             ObjectId github = remote != null ? remote : remoteMainBranch();
-            ModelGraph onGitHub = github == null ? null : graph(github);
-            ModelGraph uploaded = graph(result);
-            ModelDiff diff = ModelDiff.of(onGitHub, uploaded);
-            if (!o.reviewer().review(diff, Direction.PUSH)) {
+            ModelDiff diff = diff(github, result);
+            if (!diff.isEmpty() && !o.reviewer().review(diff, Direction.PUSH)) {
                 throw new SyncCancelledException();
             }
             RemoteRefUpdate.Status status = push(branch, o);
@@ -539,8 +610,8 @@ public final class SharedModel implements AutoCloseable {
             }
             res.pushed = true;
             res.diff = diff;
-            res.committed = onGitHub == null ? "First version of '" + uploaded.root().name() + "'"
-                    : ChangeSummary.of(onGitHub, uploaded).toString();
+            res.committed = github == null ? "First version of '" + graph(result).root().name() + "'"
+                    : changes(github, result);
             return res;
         }
     }
@@ -600,21 +671,25 @@ public final class SharedModel implements AutoCloseable {
     }
 
     /**
-     * Writes the merged model to the model file. Refuses (returns false) if the file changed since the sync
-     * read it, so a save made during the sync is never overwritten; the next sync will merge it instead.
+     * Writes the merged model to the model file and brings the Assets folder up to it. Refuses (returns false) if
+     * the file changed since the sync read it, so a save made during the sync is never overwritten; the next sync
+     * will merge it instead.
      */
     public boolean applySync(SyncResult result) throws IOException {
         if (!result.needsReload()) {
             return true;
         }
-        return applyWorkingFile(result.modelToLoad, result.newHead, result.fileHashAtRead);
+        return applyWorkingFile(result.modelToLoad, result.newHead, result.fileHashAtRead, result.notes);
     }
 
-    private boolean applyWorkingFile(byte[] content, ObjectId commit, byte[] expectedHash) throws IOException {
+    private boolean applyWorkingFile(byte[] content, ObjectId commit, byte[] expectedHash, List<String> notes)
+            throws IOException {
         if (expectedHash != null && Files.exists(modelFile)
                 && !Arrays.equals(expectedHash, sha256(Files.readAllBytes(modelFile)))) {
             return false;
         }
+        // first: if a file cannot be written, the model file and "loaded" stay, and the next sync starts from there
+        assets.apply(assets.at(assetsId()), assets.at(commit), notes);
         Path tmp = modelFile.resolveSibling(modelFile.getFileName() + ".tmp");
         Files.write(tmp, content);
         Files.move(tmp, modelFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
@@ -660,9 +735,12 @@ public final class SharedModel implements AutoCloseable {
         ModelGraph merged = session.finish();
         res.notes.addAll(session.notes());
         Map<String, byte[]> files = SplitLayout.write(merged);
-        ObjectId tree = writeTree(files, ins);
+        SharedFiles.Assets mergedAssets = SharedFiles.merge(assets.at(base), assets.at(mine), assets.at(theirs), label,
+                res.notes);
+        ObjectId tree = writeTree(files, mergedAssets, ins);
         cacheGraph(tree, SplitLayout.read(files)); // read back, so it is exactly what graph() would return
-        String message = "Merge " + label + ": " + ChangeSummary.of(gm, merged);
+        String message = "Merge " + label + ": "
+                + describe(ChangeSummary.of(gm, merged), SharedFiles.summary(assets.at(mine), mergedAssets));
         return commit(ins, tree, message, o.author(), new ObjectId[] { mine, theirs });
     }
 
@@ -837,7 +915,7 @@ public final class SharedModel implements AutoCloseable {
 
     /** Writes the current branch's content to the model file (after {@link #switchBranch}). */
     public void loadBranchContent(byte[] content) throws IOException {
-        applyWorkingFile(content, repo.resolve(R_HEADS + branch()), null);
+        applyWorkingFile(content, repo.resolve(R_HEADS + branch()), null, new ArrayList<>());
     }
 
     public void deleteBranch(String name, SyncOptions o) throws IOException {
@@ -909,7 +987,8 @@ public final class SharedModel implements AutoCloseable {
 
     /**
      * Replaces the model file with an old version. The next sync uploads this as a new change on top of the
-     * history (nothing is rewritten), so colleagues receive it like any other edit.
+     * history (nothing is rewritten), so colleagues receive it like any other edit. Assets of that version that are
+     * gone from the folder are put back; the files in the folder stay as they are.
      */
     public void restoreVersion(ObjectId commit, Instant when) throws IOException {
         byte[] content = snapshot(commit);
@@ -917,6 +996,7 @@ public final class SharedModel implements AutoCloseable {
         Path tmp = modelFile.resolveSibling(modelFile.getFileName() + ".tmp");
         Files.write(tmp, content);
         Files.move(tmp, modelFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        assets.addMissing(assets.at(commit));
     }
 
     // ================================================================ git plumbing
@@ -954,7 +1034,7 @@ public final class SharedModel implements AutoCloseable {
             tw.setRecursive(true);
             while (tw.next()) {
                 String path = tw.getPathString();
-                if (!path.equals(SplitLayout.SNAPSHOT_FILE)) {
+                if (!path.equals(SplitLayout.SNAPSHOT_FILE) && !SharedFiles.owns(path)) {
                     files.put(path, repo.open(tw.getObjectId(0)).openStream().readAllBytes());
                 }
             }
@@ -988,7 +1068,8 @@ public final class SharedModel implements AutoCloseable {
                 ? saved.withRootAttr(VERSION_ATTR, shared) : saved;
     }
 
-    private static ObjectId writeTree(Map<String, byte[]> files, ObjectInserter ins) throws IOException {
+    private static ObjectId writeTree(Map<String, byte[]> files, SharedFiles.Assets shared, ObjectInserter ins)
+            throws IOException {
         DirCache dc = DirCache.newInCore();
         DirCacheBuilder builder = dc.builder();
         for (Map.Entry<String, byte[]> f : new TreeMap<>(files).entrySet()) {
@@ -997,6 +1078,7 @@ public final class SharedModel implements AutoCloseable {
             e.setObjectId(ins.insert(Constants.OBJ_BLOB, f.getValue()));
             builder.add(e);
         }
+        SharedFiles.addTo(builder, shared, ins);
         builder.finish();
         ObjectId id = dc.writeTree(ins);
         ins.flush();

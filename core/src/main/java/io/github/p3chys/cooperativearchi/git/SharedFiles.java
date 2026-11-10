@@ -67,7 +67,7 @@ final class SharedFiles {
     static final String DIR = "Assets";
     static final String PREFIX = DIR + "/";
     /** Files next to the model file that are shared like the assets. */
-    static final Set<String> ROOT_FILES = Set.of("documentation.rules");
+    static final Set<String> ROOT_FILES = Set.of("documentation.rules", "documentation.published");
     private static final Pattern CONFLICT_COPY = Pattern.compile("(.*) \\(conflict [0-9a-f]{7,40}\\)(\\.[^.]*)?");
     /** In the repository only, never on disk. */
     static final String MARKER = ".coarchi-assets";

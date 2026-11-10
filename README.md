@@ -118,7 +118,8 @@ nothing is lost:
 - edited while a pull was running: your edit is kept under a conflict name the same way.
 
 Files arrive when the pulled model is loaded, so a model with unsaved changes gets them after you save and pull
-again. A file you only add to the folder is uploaded with the next push or sync. Files over 50 MB, links and names
+again. A file you only add to the folder is uploaded with the next push or sync; in live mode within seconds, once
+it has been still for a moment. Files over 50 MB, links and names
 that not every operating system accepts (`a:b.png`, `con.txt`) are not shared; a note says so. A colleague still on
 a plugin older than this feature neither gets nor deletes the assets. In the repository they are in `Assets/`.
 

@@ -356,6 +356,25 @@ public final class SharedModel implements AutoCloseable {
         }
     }
 
+    /** A file written less than this long ago may still be being copied: it is left for the next look. */
+    private static final long SETTLED_MILLIS = 2000;
+
+    /**
+     * True if the Assets folder or a shared file next to the model differs from the last synced version, so a sync
+     * would upload something although the model was not saved. Cheap enough to ask every few seconds: the model
+     * file is not read, and only files that changed are. False while a file there was written moments ago.
+     */
+    public boolean sharedFilesChanged() throws IOException {
+        ObjectId loaded = loadedId();
+        if (loaded == null || System.currentTimeMillis() - assets.lastModified() < SETTLED_MILLIS) {
+            return false;
+        }
+        try (ObjectInserter ins = repo.newObjectInserter()) {
+            SavedAssets a = savedAssets(loaded, ins, new ArrayList<>());
+            return !a.saved().files().equals(a.loaded().files());
+        }
+    }
+
     // ================================================================ sync
 
     /**

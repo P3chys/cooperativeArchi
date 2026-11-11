@@ -4,7 +4,6 @@ on:
   pull_request:
 jobs:
   core:
-    # The plugin compiles against a local Archi installation, so CI covers the platform independent engine.
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
@@ -17,3 +16,5 @@ jobs:
       - uses: gradle/actions/setup-gradle@v5
       - shell: bash # PowerShell would split -ParchiTarget=5.4 at the dot
         run: ./gradlew :core:build :core:cliJar -ParchiHome=none -ParchiTarget=${{ matrix.archiTarget }}
+  plugin:
+    uses: ./.github/workflows/plugin.yml

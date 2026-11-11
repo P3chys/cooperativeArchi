@@ -1,0 +1,30 @@
+name: Set up Archi
+description: Downloads (and caches) an Archi installation whose jars the plugin is compiled against.
+inputs:
+  url:
+    description: >-
+      Archi for Linux. archimatetool/archi.io only keeps the latest release, so update this when the download
+      fails (any Archi 5.x compiles every target).
+    default: https://github.com/archimatetool/archi.io/releases/download/5_11/Archi-Linux64-5.11.0.tgz
+outputs:
+  home:
+    description: The Archi installation directory, for -ParchiHome
+    value: ${{ steps.dir.outputs.home }}
+runs:
+  using: composite
+  steps:
+    - id: dir
+      shell: bash
+      run: echo "home=$RUNNER_TEMP/archi/Archi" >> "$GITHUB_OUTPUT"
+    - id: cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/archi
+        key: archi-${{ runner.os }}-${{ inputs.url }}
+    - if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        mkdir -p "$RUNNER_TEMP/archi"
+        curl -fsSL --retry 3 "${{ inputs.url }}" | tar -xz -C "$RUNNER_TEMP/archi" \
+          || { echo "::error::Archi download failed: update the url in .github/actions/setup-archi/action.yml"; exit 1; }
+        ls "$RUNNER_TEMP/archi/Archi/plugins" | grep -m1 com.archimatetool.editor_

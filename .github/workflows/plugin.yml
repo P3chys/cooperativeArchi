@@ -1,0 +1,23 @@
+name: Plugin
+# Builds and tests the .archiplugin for every supported Archi line (used by CI and by the release).
+on:
+  workflow_call:
+jobs:
+  plugin:
+    strategy:
+      matrix:
+        archiTarget: ["4.9", "5.0", "5.4", "5.10"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: "21" }
+      - uses: gradle/actions/setup-gradle@v5
+      - id: archi
+        uses: ./.github/actions/setup-archi
+      - run: ./gradlew :plugin:test :plugin:archiplugin "-ParchiHome=${{ steps.archi.outputs.home }}" "-ParchiTarget=${{ matrix.archiTarget }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archiplugin-${{ matrix.archiTarget }}
+          path: build/dist/*.archiplugin
+          if-no-files-found: error

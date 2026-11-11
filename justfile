@@ -52,6 +52,6 @@ release notes:
     v=$(sed -n 's/^version=//p' gradle.properties)
     [ "$(git branch --show-current)" = main ] || { echo "switch to main first"; exit 1; }
     git fetch -q origin main && [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || { echo "main is not in sync with origin/main"; exit 1; }
-    git tag -a "v$v" -F "{{notes}}"
+    git tag -a --cleanup=verbatim "v$v" --file "{{notes}}"  # verbatim: keep the notes' "## " headings
     git push origin "v$v"
     echo "Tagged v$v - the Release workflow publishes it: gh run watch \$(gh run list -w Release -L 1 --json databaseId -q '.[0].databaseId')"

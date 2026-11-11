@@ -1,0 +1,56 @@
+name: Release
+# Push an annotated tag v<version> (just release) to publish the .archiplugin files of that version on GitHub.
+# The tag message becomes the release notes, below the "which file" table.
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Tag matches the version in gradle.properties
+        run: |
+          version=$(sed -n 's/^version=//p' gradle.properties)
+          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME but gradle.properties has version=$version"; exit 1; }
+  plugin:
+    needs: version
+    uses: ./.github/workflows/plugin.yml
+  release:
+    needs: plugin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with: { pattern: archiplugin-*, merge-multiple: true, path: dist }
+      - name: Release notes
+        run: |
+          v=${GITHUB_REF_NAME#v}
+          # checkout leaves a lightweight copy of the tag; fetch the annotated one for its message
+          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          {
+            echo "## Pick the file for your Archi version"
+            echo
+            echo "Check **Help > About Archi**, then install the matching file with **Help > Manage Plug-ins... > Install New...** and restart Archi. Windows and macOS use the same file."
+            echo
+            echo "| Your Archi | File |"
+            echo "|---|---|"
+            echo "| 4.9.x | \`cooperativeArchi-$v-archi4.9.archiplugin\` |"
+            echo "| 5.0 – 5.3 | \`cooperativeArchi-$v-archi5.0.archiplugin\` |"
+            echo "| 5.4 – 5.9 | \`cooperativeArchi-$v-archi5.4.archiplugin\` |"
+            echo "| 5.10 and newer | \`cooperativeArchi-$v-archi5.10.archiplugin\` |"
+            echo
+            echo "Uninstall the old version first."
+            echo
+            git tag -l --format='%(contents)' "$GITHUB_REF_NAME" | sed '/-----BEGIN PGP SIGNATURE-----/,$d'
+          } > notes.md
+          cat notes.md
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls dist
+          [ "$(ls dist/*.archiplugin | wc -l)" = 4 ] || { echo "::error::expected 4 .archiplugin files"; exit 1; }
+          gh release create "$GITHUB_REF_NAME" dist/*.archiplugin --title "cooperativeArchi ${GITHUB_REF_NAME#v}" \
+            --notes-file notes.md --verify-tag

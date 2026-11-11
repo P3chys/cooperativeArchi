@@ -44,3 +44,14 @@ check:
     {{gw}} build :core:cliJar "-ParchiTarget=5.0"
     {{gw}} build :core:cliJar "-ParchiTarget=5.4"
     {{gw}} build :core:cliJar "-ParchiTarget=5.10"
+
+# publish the version in gradle.properties: tags main as v<version> with the notes file as message; CI builds the release
+release notes:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    v=$(sed -n 's/^version=//p' gradle.properties)
+    [ "$(git branch --show-current)" = main ] || { echo "switch to main first"; exit 1; }
+    git fetch -q origin main && [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || { echo "main is not in sync with origin/main"; exit 1; }
+    git tag -a "v$v" -F "{{notes}}"
+    git push origin "v$v"
+    echo "Tagged v$v - the Release workflow publishes it: gh run watch \$(gh run list -w Release -L 1 --json databaseId -q '.[0].databaseId')"

@@ -22,7 +22,11 @@ import io.github.p3chys.cooperativearchi.xml.Xml;
 /** An Archi model flattened into {@link ModelNode}s keyed by id, plus the images of an archive model. */
 public final class ModelGraph {
 
-    /** Derived by Archi on load; never stored so it cannot cause merge conflicts. */
+    /**
+     * Back references from a diagram object to the connections ending at it. Not stored in the graph (or the
+     * repository files) so it cannot cause merge conflicts; rebuilt from the connections' {@code target} when the whole
+     * model is written, because Archi needs it to draw the connection ends.
+     */
     static final String DERIVED_ATTR = "targetConnections";
     private static final String ARCHIVE_MODEL_ENTRY = "model.xml";
 
@@ -153,22 +157,48 @@ public final class ModelGraph {
         }
     }
 
+    /** The whole model as Archi reads it, including {@link #DERIVED_ATTR} (Archi does not rebuild it on load). */
     public XNode toXml() {
-        return toXml(rootId);
+        Map<String, List<String>> incoming = new LinkedHashMap<>();
+        collectIncoming(rootId, incoming);
+        return toXml(rootId, incoming);
     }
 
-    /** Rebuilds the XML subtree of one node. */
+    /** Rebuilds the XML subtree of one node, without {@link #DERIVED_ATTR} (repository files). */
     public XNode toXml(String id) {
+        return toXml(id, Map.of());
+    }
+
+    private XNode toXml(String id, Map<String, List<String>> incoming) {
         ModelNode n = nodes.get(id);
         Map<String, String> attrs = new LinkedHashMap<>(n.attrs());
         attrs.put("id", n.id());
+        List<String> in = incoming.get(id);
+        if (in != null) {
+            attrs.put(DERIVED_ATTR, String.join(" ", in));
+        }
         List<XNode> children = new ArrayList<>(n.fieldList());
         for (String childId : n.childIds()) {
             if (nodes.containsKey(childId)) {
-                children.add(toXml(childId));
+                children.add(toXml(childId, incoming));
             }
         }
         return new XNode(n.tag(), Xml.canonicalOrder(attrs), "", children);
+    }
+
+    /** Diagram connections by the id of the object they end at, in document order. */
+    private void collectIncoming(String id, Map<String, List<String>> out) {
+        ModelNode n = nodes.get(id);
+        if (n == null) {
+            return;
+        }
+        String target = n.attrs().get("target");
+        if (n.tag().equals("sourceConnection") && target != null && nodes.containsKey(target)) {
+            out.computeIfAbsent(target, k -> new ArrayList<>()).add(id);
+        }
+        for (String childId : n.childIds()) {
+            collectIncoming(childId, out);
+        }
     }
 
     // ---------------------------------------------------------------- navigation

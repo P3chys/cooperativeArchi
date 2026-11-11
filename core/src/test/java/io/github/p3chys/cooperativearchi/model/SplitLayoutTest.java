@@ -57,6 +57,21 @@ class SplitLayoutTest {
     }
 
     @Test
+    void snapshotHasTargetConnectionsButRepositoryFilesDoNot() throws Exception {
+        // Archi does not rebuild targetConnections on load; without them it draws connection ends into empty space
+        String withoutBackRefs = TestModels.text().replaceAll(" targetConnections=\"[^\"]*\"", "");
+        Map<String, byte[]> files = SplitLayout.write(TestModels.graph(withoutBackRefs));
+
+        assertThat(new String(files.get(SplitLayout.SNAPSHOT_FILE), StandardCharsets.UTF_8))
+                .contains("id=\"id-do-role\" archimateElement=\"id-role\" targetConnections=\"id-c1\"");
+        files.forEach((path, bytes) -> {
+            if (!path.equals(SplitLayout.SNAPSHOT_FILE)) {
+                assertThat(new String(bytes, StandardCharsets.UTF_8)).as(path).doesNotContain("targetConnections");
+            }
+        });
+    }
+
+    @Test
     void archiveModelWithImagesRoundTrips() throws Exception {
         String withImage = TestModels.edit(TestModels.text(), "<child xsi:type=\"archimate:Note\" id=\"id-note\">",
                 "<child xsi:type=\"archimate:Note\" id=\"id-note\" imagePath=\"images/abc.png\">");
